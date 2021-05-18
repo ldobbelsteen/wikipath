@@ -1,0 +1,25 @@
+{
+	"scripts": {
+		"watch": "parcel watch src/index.html --no-source-maps --no-hmr",
+		"build": "parcel build src/index.html --no-source-maps"
+	},
+	"dependencies": {
+		"@parcel/transformer-sass": "^2.0.0-beta.2",
+		"d3": "^6.7.0",
+		"eslint": "^7.24.0",
+		"eslint-config-prettier": "^8.3.0",
+		"eslint-plugin-html": "^6.1.2",
+		"eslint-plugin-import": "^2.22.1",
+		"eslint-plugin-jsx-a11y": "^6.4.1",
+		"eslint-plugin-prettier": "^3.4.0",
+		"eslint-plugin-react": "^7.23.2",
+		"eslint-plugin-react-hooks": "^4.2.0",
+		"parcel": "^2.0.0-beta.2",
+		"prettier": "^2.2.1",
+		"prop-types": "^15.7.2",
+		"react": "^17.0.2",
+		"react-autosuggest": "^10.1.0",
+		"react-dom": "^17.0.2",
+		"sass": "^1.32.12"
+	}
+}

@@ -1,0 +1,39 @@
+.container {
+	display: inline-block;
+}
+
+.suggestionsContainer {
+	position: absolute;
+	font-size: 0.8rem;
+	z-index: 999999;
+}
+
+.suggestionsContainerOpen {
+	background-color: white;
+	width: calc(100% - 2rem - 2px);
+	border: 1px solid grey;
+	padding: 0.5rem;
+	margin: 0.5rem;
+	top: 3rem;
+}
+
+.suggestionsList {
+	margin: 0;
+	padding: 0;
+	list-style-type: none;
+}
+
+.suggestion {
+	cursor: pointer;
+	text-align: left;
+	font-weight: bold;
+	border-bottom: 1px solid lightgray;
+
+	&:last-child {
+		border: none;
+	}
+}
+
+.suggestionHighlighted {
+	background-color: lightgray;
+}

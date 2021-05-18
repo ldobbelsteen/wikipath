@@ -1,0 +1,7 @@
+*.sqlite3*
+*.sql*
+*.txt
+
+.parcel-cache
+node_modules
+dist
