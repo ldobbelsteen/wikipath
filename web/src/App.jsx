@@ -12,6 +12,7 @@ function App() {
   const [data, setData] = useState({
     paths: [],
     language: "",
+    time: 0,
   });
 
   async function search(source, target, language) {
@@ -22,6 +23,7 @@ function App() {
         target: target,
         language: language,
       });
+      const startTime = new Date();
       const result = await getShortestPaths(source, target, language);
       setBusy(false);
       if (result === "source") return "source";
@@ -29,6 +31,7 @@ function App() {
       setData({
         paths: result,
         language: language,
+        time: new Date() - startTime,
       });
     }
   }
@@ -38,7 +41,7 @@ function App() {
       <Header text="Wikipath" />
       <Form isBusy={isBusy} search={search} />
       <Graph isBusy={isBusy} data={data} />
-      <div className="links">
+      <div className="source">
         <a href="https://github.com/ldobbelsteen/wikipath">Source code</a>
       </div>
     </>

@@ -2,6 +2,9 @@ import React, { useState, useRef, useEffect } from "react";
 import PropTypes from "prop-types";
 import * as d3 from "d3";
 
+// eslint-disable-next-line import/no-unresolved
+import Loading from "url:./loading.svg";
+
 const maxShownPaths = 8;
 
 // Run a deterministic pseudo random shuffle on an array, in-place
@@ -45,9 +48,11 @@ const Graph = (props) => {
 
     let message = `Found ${props.data.paths.length} ${
       props.data.paths.length === 1 ? "path" : "paths"
-    } of degree ${props.data.paths[0].length - 1}.`;
+    } of degree ${props.data.paths[0].length - 1} in ${
+      Math.round(props.data.time / 10) / 100
+    } seconds`;
     if (props.data.paths.length > maxShownPaths) {
-      message += ` Only ${maxShownPaths} of them are shown below.`;
+      message += `. Only ${maxShownPaths} of them are shown below`;
     }
     setText(message);
 
@@ -187,8 +192,16 @@ const Graph = (props) => {
 
   return (
     <div className="graph">
-      <p>{props.isBusy ? "Loading..." : props.data.language ? text : ""}</p>
-      <svg ref={ref} visibility={props.isBusy ? "hidden" : "visible"}></svg>
+      {props.isBusy ? (
+        <img src={Loading} alt="Loading..."></img>
+      ) : props.data.language ? (
+        <>
+          <p>{text}</p>
+          <svg ref={ref}></svg>
+        </>
+      ) : (
+        <></>
+      )}
     </div>
   );
 };
@@ -200,5 +213,6 @@ Graph.propTypes = {
   data: PropTypes.shape({
     paths: PropTypes.array,
     language: PropTypes.string,
+    time: PropTypes.number,
   }),
 };

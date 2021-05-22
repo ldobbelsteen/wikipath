@@ -78,10 +78,15 @@ const Select = ({ disabled, handler }) => {
           (element) => element.code === getUrlParameter("language")
         );
         if (index < 0) {
-          const languageCode = navigator.language.substring(0, 2);
-          index = data.findIndex((element) =>
-            element.code.includes(languageCode)
-          );
+          const userLanguages = navigator.languages || [navigator.language];
+          for (let language of userLanguages) {
+            index = data.findIndex((database) =>
+              database.code.includes(language.substring(0, 2))
+            );
+            if (index >= 0) {
+              break;
+            }
+          }
           if (index < 0) {
             index = 0;
           }
