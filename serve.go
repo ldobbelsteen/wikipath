@@ -17,8 +17,6 @@ import (
 //go:embed web/dist
 var web embed.FS
 
-type Path = []Page
-
 type Database struct {
 	connection       *sql.DB
 	pageToTitleQuery *sql.Stmt
@@ -98,7 +96,7 @@ func serve(databaseDir string, finder LanguageFinder) error {
 	// List all files in the database directory
 	files, err := os.ReadDir(databaseDir)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	// Open all databases and map from language name to the corresponding database
@@ -108,18 +106,16 @@ func serve(databaseDir string, finder LanguageFinder) error {
 		if !file.IsDir() && filepath.Ext(file.Name()) == FILE_EXTENSION {
 			database, err := newDatabase(filepath.Join(databaseDir, file.Name()), finder)
 			if err != nil {
-				return err
+				log.Print("Failed to open ", file.Name(), ": ", err)
+				break
 			}
 			databaseList = append(databaseList, database)
 			databaseMap[database.LanguageCode] = database
 		}
 	}
-	if len(databaseList) == 0 {
-		return errors.New("no database(s) found")
-	}
 
 	// Convert a page ID to the corresponding title
-	pageToTitle := func(db *Database, page Page) (string, error) {
+	pageToTitle := func(db *Database, page int64) (string, error) {
 		var title string
 		err := db.pageToTitleQuery.QueryRow(page).Scan(&title)
 		if err != nil {
@@ -129,8 +125,8 @@ func serve(databaseDir string, finder LanguageFinder) error {
 	}
 
 	// Convert a page title to the corresponding ID
-	titleToPage := func(db *Database, title string) (Page, error) {
-		var page Page
+	titleToPage := func(db *Database, title string) (int64, error) {
+		var page int64
 		err := db.titleToPageQuery.QueryRow(title).Scan(&page)
 		if err != nil {
 			return 0, err
@@ -148,15 +144,15 @@ func serve(databaseDir string, finder LanguageFinder) error {
 	}
 
 	// Get the incoming links of a page
-	getIncoming := func(db *Database, page Page) []Page {
-		result := []Page{}
+	getIncoming := func(db *Database, page int64) []int64 {
+		result := []int64{}
 		rows, err := db.incomingQuery.Query(page)
 		if err != nil {
 			return result
 		}
 		defer rows.Close()
 
-		var id Page
+		var id int64
 		for rows.Next() {
 			err := rows.Scan(&id)
 			if err != nil {
@@ -169,15 +165,15 @@ func serve(databaseDir string, finder LanguageFinder) error {
 	}
 
 	// Get the outgoing links of a page
-	getOutgoing := func(db *Database, page Page) []Page {
-		result := []Page{}
+	getOutgoing := func(db *Database, page int64) []int64 {
+		result := []int64{}
 		rows, err := db.outgoingQuery.Query(page)
 		if err != nil {
 			return result
 		}
 		defer rows.Close()
 
-		var id Page
+		var id int64
 		for rows.Next() {
 			err := rows.Scan(&id)
 			if err != nil {
@@ -190,34 +186,34 @@ func serve(databaseDir string, finder LanguageFinder) error {
 	}
 
 	// Find all the paths of the shortest possible degree between two pages
-	shortestPaths := func(db *Database, source Page, target Page) [][]string {
+	shortestPaths := func(db *Database, source int64, target int64) [][]string {
 
 		// Follow redirect if the source is a redirect
-		var redirectedSource Page
+		var redirectedSource int64
 		db.followRedirQuery.QueryRow(source).Scan(&redirectedSource)
 		if redirectedSource != 0 {
 			source = redirectedSource
 		}
 
 		// Follow redirect if the target is a redirect
-		var redirectedTarget Page
+		var redirectedTarget int64
 		db.followRedirQuery.QueryRow(target).Scan(&redirectedTarget)
 		if redirectedTarget != 0 {
 			target = redirectedTarget
 		}
 
 		// Maps pages to their parents and/or children if known
-		parents := map[Page]Page{source: source}
-		children := map[Page]Page{target: target}
+		parents := map[int64]int64{source: source}
+		children := map[int64]int64{target: target}
 
 		// The current queues of the forward and backward BFSes
-		forwardQueue := []Page{source}
-		backwardQueue := []Page{target}
+		forwardQueue := []int64{source}
+		backwardQueue := []int64{target}
 		forwardDepth := 0
 		backwardDepth := 0
 
 		// Slice of intersecting pages between the forward and backward searches
-		intersecting := []Page{}
+		intersecting := []int64{}
 		if source == target {
 			intersecting = append(intersecting, source)
 		}
@@ -226,7 +222,7 @@ func serve(databaseDir string, finder LanguageFinder) error {
 		for len(intersecting) == 0 && len(forwardQueue) > 0 && len(backwardQueue) > 0 {
 			if len(backwardQueue) > len(forwardQueue) {
 				forwardDepth++
-				newQueue := []Page{}
+				newQueue := []int64{}
 				for _, page := range forwardQueue {
 					outgoing := getOutgoing(db, page)
 					for _, out := range outgoing {
@@ -242,7 +238,7 @@ func serve(databaseDir string, finder LanguageFinder) error {
 				forwardQueue = newQueue
 			} else {
 				backwardDepth++
-				newQueue := []Page{}
+				newQueue := []int64{}
 				for _, page := range backwardQueue {
 					incoming := getIncoming(db, page)
 					for _, in := range incoming {
