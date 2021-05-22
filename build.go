@@ -103,7 +103,7 @@ func build(path string, files LocalDumpFiles) error {
 	// the table format from https://www.mediawiki.org/wiki/Manual:Redirect_table. Only redirects in the 0 namespace are accepted. The rd_title is
 	// converted to its corresponding ID and a map that maps a page ID to the page ID it redirects to is created.
 	log.Print("Parsing redirect dump file...")
-	expression = `\(([0-9]{1,10}),0,'(.{1,255}?)','.{0,32}?',''\)`
+	expression = `\(([0-9]{1,10}),0,'(.{1,255}?)','.{0,32}?','.{0,255}?'\)`
 	redirects := map[Page]Page{}
 	err = dumpParse(files.redirFilePath, expression, 1536, func(match []string) error {
 		source, err := parsePageID(match[0])
