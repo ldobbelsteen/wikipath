@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"time"
 )
 
 //go:embed web/dist
@@ -28,6 +29,12 @@ type Database struct {
 	DumpDate         string `json:"date"`
 	LanguageName     string `json:"language"`
 	LanguageCode     string `json:"code"`
+}
+
+type Search struct {
+	language string
+	source   int64
+	target   int64
 }
 
 func newDatabase(path string, finder LanguageFinder) (*Database, error) {
@@ -91,7 +98,7 @@ func newDatabase(path string, finder LanguageFinder) (*Database, error) {
 	}, nil
 }
 
-func serve(databaseDir string, finder LanguageFinder) error {
+func serve(databaseDir string, finder LanguageFinder, cacheSize int) error {
 
 	// List all files in the database directory
 	files, err := os.ReadDir(databaseDir)
@@ -186,36 +193,36 @@ func serve(databaseDir string, finder LanguageFinder) error {
 	}
 
 	// Find all the paths of the shortest possible degree between two pages
-	shortestPaths := func(db *Database, source int64, target int64) [][]string {
+	shortestPaths := func(db *Database, search Search) [][]string {
 
 		// Follow redirect if the source is a redirect
 		var redirectedSource int64
-		db.followRedirQuery.QueryRow(source).Scan(&redirectedSource)
+		db.followRedirQuery.QueryRow(search.source).Scan(&redirectedSource)
 		if redirectedSource != 0 {
-			source = redirectedSource
+			search.source = redirectedSource
 		}
 
 		// Follow redirect if the target is a redirect
 		var redirectedTarget int64
-		db.followRedirQuery.QueryRow(target).Scan(&redirectedTarget)
+		db.followRedirQuery.QueryRow(search.target).Scan(&redirectedTarget)
 		if redirectedTarget != 0 {
-			target = redirectedTarget
+			search.target = redirectedTarget
 		}
 
 		// Maps pages to their parents and/or children if known
-		parents := map[int64]int64{source: source}
-		children := map[int64]int64{target: target}
+		parents := map[int64]int64{search.source: search.source}
+		children := map[int64]int64{search.target: search.target}
 
 		// The current queues of the forward and backward BFSes
-		forwardQueue := []int64{source}
-		backwardQueue := []int64{target}
+		forwardQueue := []int64{search.source}
+		backwardQueue := []int64{search.target}
 		forwardDepth := 0
 		backwardDepth := 0
 
 		// Slice of intersecting pages between the forward and backward searches
 		intersecting := []int64{}
-		if source == target {
-			intersecting = append(intersecting, source)
+		if search.source == search.target {
+			intersecting = append(intersecting, search.source)
 		}
 
 		// Run bidirectional breadth-first search on the database
@@ -324,6 +331,7 @@ func serve(databaseDir string, finder LanguageFinder) error {
 	})
 
 	// Handler for serving the shortest paths between two pages
+	cache := NewSearchCache(cacheSize)
 	http.HandleFunc("/paths", func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Cache-Control", "max-age=86400")
 		parameters := request.URL.Query()
@@ -364,7 +372,24 @@ func serve(databaseDir string, finder LanguageFinder) error {
 			return
 		}
 
-		paths := shortestPaths(database, source, target)
+		search := Search{
+			language: language,
+			source:   source,
+			target:   target,
+		}
+
+		var paths [][]string
+		if cached := cache.Find(search); cached != nil {
+			paths = cached
+		} else {
+			start := time.Now()
+			paths = shortestPaths(database, search)
+			time.Sleep(time.Second * 4)
+			if time.Since(start).Seconds() > 2 {
+				cache.Store(search, paths)
+			}
+		}
+
 		writer.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(writer).Encode(paths)
 	})

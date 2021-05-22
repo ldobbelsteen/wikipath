@@ -23,6 +23,7 @@ func main() {
 
 	serveCommand := flag.NewFlagSet("serve", flag.ExitOnError)
 	serveDatabases := serveCommand.String("databases", ".", "Parent directory of the database(s)")
+	serveCacheSize := serveCommand.Int("cache", 16384, "The number of searches to keep in cache")
 
 	if len(os.Args) < 2 {
 		log.Fatal("expected 'build' or 'serve' subcommands")
@@ -73,7 +74,7 @@ func main() {
 			log.Fatal(err)
 		}
 
-		err = serve(*serveDatabases, finder)
+		err = serve(*serveDatabases, finder, *serveCacheSize)
 		if err != nil {
 			log.Fatal(err)
 		}
