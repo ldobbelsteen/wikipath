@@ -16,8 +16,6 @@ import (
 	"github.com/cheggaaa/pb/v3"
 )
 
-type Page = int64
-
 type LocalDumpFiles struct {
 	pageFilePath  string
 	redirFilePath string
@@ -227,28 +225,6 @@ func getFileSize(file *os.File) int64 {
 		return 0
 	}
 	return info.Size()
-}
-
-// Delete a file if it exists
-func deleteFile(path string) error {
-	err := os.Remove(path)
-	if err != nil {
-		if !os.IsNotExist(err) {
-			return err
-		}
-	}
-	return nil
-}
-
-// Convert a string containing a page ID to its integer represenation. In the dumps, page IDs
-// are 10 digit unsigned integers, meaning the max value is 9999999999. This number fits in a
-// 34 bit integer, which is why that is set as the bitsize in the parser.
-func parsePageID(str string) (int64, error) {
-	id, err := strconv.ParseInt(str, 10, 34)
-	if err != nil {
-		return 0, err
-	}
-	return id, nil
 }
 
 // Check whether a HTTP resource exists by sending a HEAD request
