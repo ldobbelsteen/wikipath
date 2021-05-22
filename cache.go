@@ -12,8 +12,8 @@ type SearchCache struct {
 	endIndex   int
 }
 
-func NewSearchCache(size int) SearchCache {
-	return SearchCache{
+func NewSearchCache(size int) *SearchCache {
+	return &SearchCache{
 		data:       map[Search][][]string{},
 		keys:       make([]Search, size),
 		mutex:      sync.Mutex{},
