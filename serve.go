@@ -384,7 +384,6 @@ func serve(databaseDir string, finder LanguageFinder, cacheSize int) error {
 		} else {
 			start := time.Now()
 			paths = shortestPaths(database, search)
-			time.Sleep(time.Second * 4)
 			if time.Since(start).Seconds() > 2 {
 				cache.Store(search, paths)
 			}
