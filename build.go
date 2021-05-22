@@ -117,6 +117,7 @@ func build(path string, files LocalDumpFiles) error {
 				encountered = append(encountered, tempTarget)
 			}
 			target = encountered[len(encountered)-1]
+			redirects[source] = target
 		}
 		_, err := updateRedirect.Exec(target, source)
 		if err != nil {
