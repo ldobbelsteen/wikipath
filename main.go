@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/c2h5oh/datasize"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -20,6 +21,7 @@ func main() {
 	buildDumps := buildCommand.String("dumps", "dumps", "Directory to download dump files to")
 	buildMirror := buildCommand.String("mirror", "https://dumps.wikimedia.org", "Mirror to download dumps from")
 	buildLanguage := buildCommand.String("language", "en", "Language to build database of")
+	buildMemory := buildCommand.String("memory", "12GB", "Maximum memory usage")
 
 	serveCommand := flag.NewFlagSet("serve", flag.ExitOnError)
 	serveDatabases := serveCommand.String("databases", ".", "Parent directory of the database(s)")
@@ -53,7 +55,9 @@ func main() {
 		finalPath := filepath.Join(*buildOutput, language.Database+"-"+files.dateString+FILE_EXTENSION)
 		tempPath := finalPath + ".tmp"
 
-		err = build(tempPath, files)
+		var maximumMemory datasize.ByteSize
+		maximumMemory.UnmarshalText([]byte(*buildMemory))
+		err = build(tempPath, files, maximumMemory.Bytes())
 		if err != nil {
 			log.Fatal(err)
 		}

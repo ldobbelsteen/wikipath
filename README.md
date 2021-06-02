@@ -26,6 +26,7 @@ wikipath build
     [--dumps <directory>]
     [--mirror <mirror-url>]
     [--language <language-tag>]
+    [--memory <byte-size>]
 ```
 
 `--output` specifies the directory to output the database to. Defaults to the current directory.
@@ -36,16 +37,23 @@ wikipath build
 
 `--language` specifies which Wikipedia language to create a database of. A list of all Wikipedia languages can be found [here](https://en.wikipedia.org/wiki/List_of_Wikipedias). The language should be specified in the language code of the website (e.g. `en` for English, `de` for German, etc.) Defaults to `en`
 
-This command does everything for you; it downloads the latest dumps, parses them and ingests them into an SQLite database. Be aware that this process takes a long time depending on your machine's processing power and memory size. Different Wikipedia languages also have very differing numbers of articles, which also hugely influences the build time. There is a minimum amount of memory required, as part of the dump has to be kept in-memory during this process (approx. 24GB for the English database). Also keep in mind that the compressed dump files stay on disk to prevent re-downloads on re-builds and as such will require a minimum free disk space equal to the sum of the `pagelinks.sql.gz`, `page.sql.gz` and `redirect.sql.gz` dumps (approx. 9GB for the English database) on top of the size of the final database. To give an idea of how long the build process takes; a computer with 6 cores and 32GB of memory takes around 45 minutes (excluding download times) to complete a build of the English Wikipedia.
+`--memory` specifies the maximum amount of memory the build process can use. The higher the value, the faster the build process will be. This value may be exceeded, so make sure there is some headroom. Defaults to `12GB`
+
+This command does everything for you; it downloads the latest dumps, parses them and ingests them into an SQLite database. Be aware that this process takes a long time depending on your machine's processing power and memory size. Different Wikipedia languages also have very differing numbers of articles, which also hugely influences the build time. There is a minimum amount of memory required, as part of the dump has to be kept in-memory during this process (approx. 12GB for the English database). Any remaining memory from the `memory` parameter is used to cache links, which greatly improves performance as less database inserts are needed. This means that about 16GB of system memory is the absolute minimum if you are building the English database. Also keep in mind that the compressed dump files stay on disk to prevent re-downloads on re-builds and as such will require a minimum free disk space equal to the sum of the `pagelinks.sql.gz`, `page.sql.gz` and `redirect.sql.gz` dumps (approx. 9GB for the English database) on top of the size of the final database. To give an idea of how long the build process takes; a computer with 6 cores and 32GB of memory takes around 45 minutes (excluding download times) to complete a build of the English Wikipedia.
+
 
 ## Serving
 Once the database(s) have been built (you can build databases of as many languages as you want and all of them will be available your website), the `serve` subcommand will serve the HTTP web interface on port `1789`:
 
 ```
-wikipath serve [--databases <directory>]
+wikipath serve
+    [--databases <directory>]
+    [--cache <count>]
 ```
 
 `--databases` specifies the directory where the database(s) is/are located. Defaults to the current directory.
+
+`--cache` specifies the number of shortest path searches to keep in memory. This feature caches searches that took longer than 2 seconds to process. Defaults to `16384`.
 
 ## Docker
 There is a Dockerfile included with which an image can be built that can serve databases. Prebuilt images can be found [here](https://hub.docker.com/r/ldobbelsteen/wikipath) or you can build your own:
