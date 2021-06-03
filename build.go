@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"log"
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/cheggaaa/pb/v3"
 )
@@ -92,10 +94,10 @@ func build(path string, files LocalDumpFiles) error {
 	// created in the middle of page edits where titles are changed causing redirects to be messed up, which is very rare. All targets in the
 	// map are now guaranteed to not be redirects themselves. The redirects are also inserted into the database.
 	log.Print("Cleaning up & ingesting redirects...")
-	// updateRedirect, err := tx.Prepare("UPDATE pages SET redirect = ? WHERE id = ?")
-	// if err != nil {
-	// 	return err
-	// }
+	updateRedirect, err := tx.Prepare("UPDATE pages SET redirect = ? WHERE id = ?")
+	if err != nil {
+		return err
+	}
 	bar := pb.StartNew(len(redirects))
 	for source, target := range redirects {
 		bar.Increment()
@@ -117,10 +119,10 @@ func build(path string, files LocalDumpFiles) error {
 			target = encountered[len(encountered)-1]
 			redirects[source] = target
 		}
-		// _, err := updateRedirect.Exec(target, source)
-		// if err != nil {
-		// 	return err
-		// }
+		_, err := updateRedirect.Exec(target, source)
+		if err != nil {
+			return err
+		}
 	}
 	bar.Finish()
 
@@ -141,36 +143,36 @@ func build(path string, files LocalDumpFiles) error {
 	// 		time.Sleep(time.Second)
 	// 	}
 	// }()
-	// insertIncomingQuery, err := tx.Prepare("UPDATE pages SET incoming = CASE WHEN incoming IS NULL THEN '' ELSE incoming || ',' END || ? WHERE id = ?")
-	// if err != nil {
-	// 	return err
-	// }
-	// insertIncoming := func(target int64, sources []int64) error {
-	// 	stringSources := make([]string, len(sources))
-	// 	for i, v := range sources {
-	// 		stringSources[i] = strconv.FormatInt(v, 10)
-	// 	}
-	// 	_, err := insertIncomingQuery.Exec(strings.Join(stringSources, ","), target)
-	// 	if err != nil {
-	// 		return err
-	// 	}
-	// 	return nil
-	// }
-	// insertOutgoingQuery, err := tx.Prepare("UPDATE pages SET outgoing = CASE WHEN outgoing IS NULL THEN '' ELSE outgoing || ',' END || ? WHERE id = ?")
-	// if err != nil {
-	// 	return err
-	// }
-	// insertOutgoing := func(source int64, targets []int64) error {
-	// 	stringTargets := make([]string, len(targets))
-	// 	for i, v := range targets {
-	// 		stringTargets[i] = strconv.FormatInt(v, 10)
-	// 	}
-	// 	_, err := insertOutgoingQuery.Exec(strings.Join(stringTargets, ","), source)
-	// 	if err != nil {
-	// 		return err
-	// 	}
-	// 	return nil
-	// }
+	insertIncomingQuery, err := tx.Prepare("UPDATE pages SET incoming = CASE WHEN incoming IS NULL THEN '' ELSE incoming || ',' END || ? WHERE id = ?")
+	if err != nil {
+		return err
+	}
+	insertIncoming := func(target int64, sources []int64) error {
+		stringSources := make([]string, len(sources))
+		for i, v := range sources {
+			stringSources[i] = strconv.FormatInt(v, 10)
+		}
+		_, err := insertIncomingQuery.Exec(strings.Join(stringSources, ","), target)
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+	insertOutgoingQuery, err := tx.Prepare("UPDATE pages SET outgoing = CASE WHEN outgoing IS NULL THEN '' ELSE outgoing || ',' END || ? WHERE id = ?")
+	if err != nil {
+		return err
+	}
+	insertOutgoing := func(source int64, targets []int64) error {
+		stringTargets := make([]string, len(targets))
+		for i, v := range targets {
+			stringTargets[i] = strconv.FormatInt(v, 10)
+		}
+		_, err := insertOutgoingQuery.Exec(strings.Join(stringTargets, ","), source)
+		if err != nil {
+			return err
+		}
+		return nil
+	}
 	incoming := map[int64][]int64{}
 	outgoing := map[int64][]int64{}
 	for link := range linkChan {
@@ -207,21 +209,21 @@ func build(path string, files LocalDumpFiles) error {
 		// }
 	}
 
-	// log.Print("Flushing incoming links to database...")
-	// for target, sources := range incoming {
-	// 	err := insertIncoming(target, sources)
-	// 	if err != nil {
-	// 		return err
-	// 	}
-	// }
+	log.Print("Flushing incoming links to database...")
+	for target, sources := range incoming {
+		err := insertIncoming(target, sources)
+		if err != nil {
+			return err
+		}
+	}
 
-	// log.Print("Flushing outgoing links to database...")
-	// for source, targets := range outgoing {
-	// 	err := insertOutgoing(source, targets)
-	// 	if err != nil {
-	// 		return err
-	// 	}
-	// }
+	log.Print("Flushing outgoing links to database...")
+	for source, targets := range outgoing {
+		err := insertOutgoing(source, targets)
+		if err != nil {
+			return err
+		}
+	}
 
 	return nil
 }
