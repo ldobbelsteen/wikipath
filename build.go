@@ -12,7 +12,7 @@ const BUFFER_SIZE = 24576
 
 // Build a new database from scratch using a set of dump files and the desired path of the database
 // This process is language agnostic as it is determined by the dump files that are supplied
-func build(path string, files LocalDumpFiles, maxMemory uint64) error {
+func build(path string, files LocalDumpFiles) error {
 
 	// Delete any previous database
 	err := os.Remove(path)
@@ -59,16 +59,16 @@ func build(path string, files LocalDumpFiles, maxMemory uint64) error {
 	pageChan := make(chan Page, BUFFER_SIZE)
 	go pageDumpParse(files.pageFilePath, pageChan)
 	titler := map[string]int64{}
-	// insertPage, err := tx.Prepare("INSERT OR REPLACE INTO pages VALUES (?, ?, NULL, NULL, NULL)")
-	// if err != nil {
-	// 	return err
-	// }
+	insertPage, err := tx.Prepare("INSERT OR REPLACE INTO pages VALUES (?, ?, NULL, NULL, NULL)")
+	if err != nil {
+		return err
+	}
 	for page := range pageChan {
 		titler[page.title] = page.id
-		// _, err := insertPage.Exec(page.id, page.title)
-		// if err != nil {
-		// 	return err
-		// }
+		_, err := insertPage.Exec(page.id, page.title)
+		if err != nil {
+			return err
+		}
 	}
 
 	// Create index to optimize getting a page ID by a page's title
