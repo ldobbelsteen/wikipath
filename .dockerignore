@@ -1,0 +1,9 @@
+**/*.sqlite3
+**/*.sqlite3.tmp
+**/*.sql.gz
+**/*.sql
+**/*.txt
+**/.git
+**/.parcel-cache
+**/node_modules
+**/dist

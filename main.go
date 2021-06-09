@@ -21,7 +21,7 @@ func main() {
 	buildDumps := buildCommand.String("dumps", "dumps", "Directory to download dump files to")
 	buildMirror := buildCommand.String("mirror", "https://dumps.wikimedia.org", "Mirror to download dumps from")
 	buildLanguage := buildCommand.String("language", "en", "Language to build database of")
-	buildMemory := buildCommand.Int("memory", 50, "Maximum usage percentage of total system memory")
+	buildMemory := buildCommand.Int("memory", 70, "Maximum usage percentage of total system memory")
 
 	serveCommand := flag.NewFlagSet("serve", flag.ExitOnError)
 	serveDatabases := serveCommand.String("databases", ".", "Parent directory of the database(s)")
