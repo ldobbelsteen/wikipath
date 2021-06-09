@@ -40,7 +40,7 @@ func main() {
 		}
 		start := time.Now()
 
-		finder, err := getLanguages()
+		finder, err := GetLanguages()
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -82,7 +82,7 @@ func main() {
 			log.Fatal(err)
 		}
 
-		finder, err := getLanguages()
+		finder, err := GetLanguages()
 		if err != nil {
 			log.Fatal(err)
 		}

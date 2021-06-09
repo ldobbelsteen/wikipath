@@ -17,7 +17,7 @@ type LanguageFinder []Language
 
 // Fetch the list of all the Wikipedia languages and their corresponding codes and database names
 // by fetching and parsing a sitematrix from the Wikimedia Commons API.
-func getLanguages() (LanguageFinder, error) {
+func GetLanguages() (LanguageFinder, error) {
 	resp, err := http.Get("https://commons.wikimedia.org/w/api.php?format=json&action=sitematrix")
 	if err != nil {
 		return nil, err
