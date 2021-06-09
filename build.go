@@ -3,29 +3,26 @@ package main
 import (
 	"database/sql"
 	"log"
-	"os"
+	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/cheggaaa/pb/v3"
+	"github.com/pbnjay/memory"
 )
 
-const BUFFER_SIZE = 24576
-
 // Build a new database from scratch using a set of dump files and the desired path of the database
-// This process is language agnostic as it is determined by the dump files that are supplied
-func build(path string, files LocalDumpFiles) error {
+func buildDatabase(path string, files *LocalDumpFiles, maxMemoryFraction float64) error {
 
-	// Delete any previous database
-	err := os.Remove(path)
+	// Delete any previous database remains
+	err := deleteFile(path)
 	if err != nil {
-		if !os.IsNotExist(err) {
-			return err
-		}
+		return err
 	}
 
-	// Create new database and open it with full privileges
-	db, err := sql.Open("sqlite3", "file:"+path+"?mode=rwc&_journal=MEMORY")
+	// Create new database and open it
+	db, err := sql.Open("sqlite3", "file:"+path+"?_journal=MEMORY")
 	if err != nil {
 		return err
 	}
@@ -36,69 +33,73 @@ func build(path string, files LocalDumpFiles) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Commit()
 
-	// Create the main pages table. It represents all the pages by its ID, title and the page it redirects to.
-	// It also contains the IDs of the pages that link to it (incoming) and the pages it links to (outgoing),
-	// in the form of a string with the IDs delimited by commas. The redirect column is NULL if the page is not a
-	// redirect and the ID of the target page if it is.
+	// Create the tables. The 'titles' table contains all page IDs and their respective titles. The 'redirects' table
+	// contains the source and target page IDs of all redirects. The 'incoming' and 'outgoing' tables contain page IDs
+	// with their respective incoming page IDs and outgoing page IDs.
 	_, err = tx.Exec(`
-		CREATE TABLE pages (
-			id INTEGER PRIMARY KEY,
-			title TEXT NOT NULL,
-			redirect INTEGER,
-			incoming TEXT,
-			outgoing TEXT
+		CREATE TABLE titles (
+			page_id INTEGER PRIMARY KEY,
+			title TEXT NOT NULL
+		);
+		CREATE TABLE redirects (
+			source_id INTEGER PRIMARY KEY,
+			target_id INTEGER NOT NULL
+		);
+		CREATE TABLE incoming (
+			target_id INTEGER PRIMARY KEY,
+			incoming_ids TEXT NOT NULL
+		);
+		CREATE TABLE outgoing (
+			source_id INTEGER PRIMARY KEY,
+			outgoing_ids TEXT NOT NULL
 		);
 	`)
 	if err != nil {
 		return err
 	}
 
-	// Parse the page dump file and ingest the resulting pages into the database with redirect 0 for now; the redirects will be inserted later.
-	// A map is also created, mapping a page title to its page ID which is useful for the redirects and links parsing later on.
+	// Parse the page dump file and ingest the titles into the database. A map is also created, mapping
+	// a page title to its page ID which is useful for the parsing later on.
 	log.Print("Parsing & ingesting page dump file...")
-	pageChan := make(chan Page, BUFFER_SIZE)
-	go pageDumpParse(files.pageFilePath, pageChan)
+	pageChan, err := pageDumpParse(files.pageFilePath)
+	if err != nil {
+		return err
+	}
 	titler := map[string]int64{}
-	insertPage, err := tx.Prepare("INSERT OR REPLACE INTO pages VALUES (?, ?, NULL, NULL, NULL)")
+	insertTitle, err := tx.Prepare("INSERT OR REPLACE INTO titles VALUES (?, ?)")
 	if err != nil {
 		return err
 	}
 	for page := range pageChan {
 		titler[page.title] = page.id
-		_, err := insertPage.Exec(page.id, page.title)
+		_, err := insertTitle.Exec(page.id, page.title)
 		if err != nil {
 			return err
 		}
 	}
 
-	// Create index to optimize getting a page ID by a page's title
-	log.Print("Creating title finding optimization index...")
-	_, err = tx.Exec("CREATE INDEX titler ON pages (title)")
+	// Parse the redirects dump file and create a map that maps a page ID to the page ID it redirects to
+	log.Print("Parsing redirect dump file...")
+	redirChan, err := redirDumpParse(files.redirFilePath, titler)
 	if err != nil {
 		return err
 	}
-
-	// Parse the redirects dump file and create a map that maps a page ID to the page ID it redirects to
-	log.Print("Parsing redirect dump file...")
-	redirectChan := make(chan Redir, BUFFER_SIZE)
-	go redirDumpParse(files.redirFilePath, titler, redirectChan)
 	redirects := map[int64]int64{}
-	for redirect := range redirectChan {
+	for redirect := range redirChan {
 		redirects[redirect.source] = redirect.target
 	}
 
 	// Loop over the redirects map and update the targets of redirects that have another redirect as a target. This also makes sure to break
 	// any cyclic redirects, favoring the deepest chain of redirects before a cycle occurs. Cyclic redirects should only occur when dumps are
 	// created in the middle of page edits where titles are changed causing redirects to be messed up, which is very rare. All targets in the
-	// map are now guaranteed to not be redirects themselves. The redirects are also inserted into the database.
+	// map are now guaranteed to not be redirects themselves. The redirects are inserted into the database.
 	log.Print("Cleaning up & ingesting redirects...")
-	updateRedirect, err := tx.Prepare("UPDATE pages SET redirect = ? WHERE id = ?")
+	insertRedirect, err := tx.Prepare("INSERT INTO redirects VALUES (?, ?)")
 	if err != nil {
 		return err
 	}
-	bar := pb.StartNew(len(redirects))
+	bar := pb.Full.Start(len(redirects))
 	for source, target := range redirects {
 		bar.Increment()
 		_, targetIsRedir := redirects[target]
@@ -119,110 +120,119 @@ func build(path string, files LocalDumpFiles) error {
 			target = encountered[len(encountered)-1]
 			redirects[source] = target
 		}
-		_, err := updateRedirect.Exec(target, source)
+		_, err := insertRedirect.Exec(source, target)
 		if err != nil {
 			return err
 		}
 	}
 	bar.Finish()
 
-	// Parse the pagelinks dump file. It keeps a map of incoming and outgoing links for each page in memory,
-	// to prevent having to do an insert for each link. This however means a lot of memory will be used,
-	// which is why in parallel the memory usage is checked every second. If the maximum memory usage is
-	// exceeded, the parsing process is temporarily paused and the maps are (partially) flushed to the
-	// database. At the end all of the remaining in-memory links are also flushed to the database.
+	// Parse the pagelinks dump file and store the incoming and outgoing links for all page IDs in
+	// a large cache. The cache is in-memory and can grow to be quite large. At the end all of the
+	// incoming and outgoing links are inserted into the database as text, where the IDs are delimited
+	// by a |. If the maximum memory usage is exceeded by the cache, it flushes part of its contents to
+	// free up some space. This intermediate flushing is however not desirable, as it causes more inserts
+	// to be needed.
 	log.Print("Parsing link dump file...")
-	linkChan := make(chan Link, BUFFER_SIZE)
-	go linkDumpParse(files.linkFilePath, titler, redirects, linkChan)
-	// memoryLimitReached := false
-	// go func() {
-	// 	var stats runtime.MemStats
-	// 	for {
-	// 		runtime.ReadMemStats(&stats)
-	// 		memoryLimitReached = stats.Alloc > maxMemory
-	// 		time.Sleep(time.Second)
-	// 	}
-	// }()
-	insertIncomingQuery, err := tx.Prepare("UPDATE pages SET incoming = CASE WHEN incoming IS NULL THEN '' ELSE incoming || ',' END || ? WHERE id = ?")
+	linkChan, toggleProgress, err := linkDumpParse(files.linkFilePath, titler, redirects)
 	if err != nil {
 		return err
-	}
-	insertIncoming := func(target int64, sources []int64) error {
-		stringSources := make([]string, len(sources))
-		for i, v := range sources {
-			stringSources[i] = strconv.FormatInt(v, 10)
-		}
-		_, err := insertIncomingQuery.Exec(strings.Join(stringSources, ","), target)
-		if err != nil {
-			return err
-		}
-		return nil
-	}
-	insertOutgoingQuery, err := tx.Prepare("UPDATE pages SET outgoing = CASE WHEN outgoing IS NULL THEN '' ELSE outgoing || ',' END || ? WHERE id = ?")
-	if err != nil {
-		return err
-	}
-	insertOutgoing := func(source int64, targets []int64) error {
-		stringTargets := make([]string, len(targets))
-		for i, v := range targets {
-			stringTargets[i] = strconv.FormatInt(v, 10)
-		}
-		_, err := insertOutgoingQuery.Exec(strings.Join(stringTargets, ","), source)
-		if err != nil {
-			return err
-		}
-		return nil
 	}
 	incoming := map[int64][]int64{}
 	outgoing := map[int64][]int64{}
+	incomingInsert, err := tx.Prepare("INSERT INTO incoming VALUES (?, ?) ON CONFLICT DO UPDATE SET incoming_ids = incoming_ids || '|' || ?")
+	if err != nil {
+		return err
+	}
+	outgoingInsert, err := tx.Prepare("INSERT INTO outgoing VALUES (?, ?) ON CONFLICT DO UPDATE SET outgoing_ids = outgoing_ids || '|' || ?")
+	if err != nil {
+		return err
+	}
+	flushCache := func(fraction float64) error {
+		targetTotalSize := int((1 - fraction) * float64(len(incoming)+len(outgoing)))
+		incomingFlush := len(incoming) - targetTotalSize/2
+		outgoingFlush := len(outgoing) - targetTotalSize/2
+		bar := pb.Full.Start(incomingFlush + outgoingFlush)
+		toSeparatedString := func(slc []int64) string {
+			stringified := make([]string, len(slc))
+			for index, source := range slc {
+				stringified[index] = strconv.FormatInt(source, 10)
+			}
+			return strings.Join(stringified, "|")
+		}
+		flushIndex := 0
+		for target, sources := range incoming {
+			separated := toSeparatedString(sources)
+			_, err := incomingInsert.Exec(target, separated, separated)
+			if err != nil {
+				return err
+			}
+			delete(incoming, target)
+			flushIndex++
+			bar.Increment()
+			if flushIndex >= incomingFlush {
+				break
+			}
+		}
+		flushIndex = 0
+		for source, targets := range outgoing {
+			separated := toSeparatedString(targets)
+			_, err := outgoingInsert.Exec(source, separated, separated)
+			if err != nil {
+				return err
+			}
+			delete(outgoing, source)
+			flushIndex++
+			bar.Increment()
+			if flushIndex >= outgoingFlush {
+				break
+			}
+		}
+		bar.Finish()
+		return nil
+	}
+	maxMemoryBytes := uint64(float64(memory.TotalMemory()) * maxMemoryFraction)
+	exceedingMemory := false
+	go func() {
+		var info runtime.MemStats
+		for {
+			time.Sleep(time.Second)
+			runtime.ReadMemStats(&info)
+			exceedingMemory = info.Alloc >= maxMemoryBytes
+		}
+	}()
 	for link := range linkChan {
 		incoming[link.target] = append(incoming[link.target], link.source)
 		outgoing[link.source] = append(outgoing[link.source], link.target)
-		// if memoryLimitReached {
-		// 	log.Print("Maximum memory usage exceeded, flushing to database...")
-		// 	incomingLength := len(incoming)
-		// 	incomingIndex := 0
-		// 	for target, sources := range incoming {
-		// 		err := insertIncoming(target, sources)
-		// 		if err != nil {
-		// 			return err
-		// 		}
-		// 		delete(incoming, target)
-		// 		incomingIndex++
-		// 		if incomingIndex > incomingLength/2 {
-		// 			break
-		// 		}
-		// 	}
-		// 	outgoingLength := len(outgoing)
-		// 	outgoingIndex := 0
-		// 	for source, targets := range outgoing {
-		// 		err := insertOutgoing(source, targets)
-		// 		if err != nil {
-		// 			return err
-		// 		}
-		// 		delete(outgoing, source)
-		// 		outgoingIndex++
-		// 		if outgoingIndex > outgoingLength/2 {
-		// 			break
-		// 		}
-		// 	}
-		// }
-	}
-
-	log.Print("Flushing incoming links to database...")
-	for target, sources := range incoming {
-		err := insertIncoming(target, sources)
-		if err != nil {
-			return err
+		if exceedingMemory {
+			toggleProgress()
+			log.Print("Maximum memory usage exceeded, partially ingesting into database...")
+			err := flushCache(0.4)
+			if err != nil {
+				return err
+			}
+			exceedingMemory = false
+			log.Print("Continuing parsing...")
+			toggleProgress()
 		}
 	}
+	log.Print("Ingesting links into database...")
+	err = flushCache(1.0)
+	if err != nil {
+		return err
+	}
 
-	log.Print("Flushing outgoing links to database...")
-	for source, targets := range outgoing {
-		err := insertOutgoing(source, targets)
-		if err != nil {
-			return err
-		}
+	// Create index to optimize getting a page ID by a page's title
+	log.Print("Creating title finding optimization index...")
+	_, err = tx.Exec("CREATE INDEX titler ON titles (title)")
+	if err != nil {
+		return err
+	}
+
+	// Commit the entire transaction
+	err = tx.Commit()
+	if err != nil {
+		return err
 	}
 
 	return nil

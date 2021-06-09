@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"log"
 	"os"
@@ -20,6 +21,7 @@ func main() {
 	buildDumps := buildCommand.String("dumps", "dumps", "Directory to download dump files to")
 	buildMirror := buildCommand.String("mirror", "https://dumps.wikimedia.org", "Mirror to download dumps from")
 	buildLanguage := buildCommand.String("language", "en", "Language to build database of")
+	buildMemory := buildCommand.Int("memory", 70, "Maximum usage percentage total system memory")
 
 	serveCommand := flag.NewFlagSet("serve", flag.ExitOnError)
 	serveDatabases := serveCommand.String("databases", ".", "Parent directory of the database(s)")
@@ -32,7 +34,10 @@ func main() {
 	switch os.Args[1] {
 	case "build":
 
-		buildCommand.Parse(os.Args[2:])
+		err := buildCommand.Parse(os.Args[2:])
+		if err != nil {
+			log.Fatal(err)
+		}
 		start := time.Now()
 
 		finder, err := getLanguages()
@@ -53,7 +58,12 @@ func main() {
 		finalPath := filepath.Join(*buildOutput, language.Database+"-"+files.dateString+FILE_EXTENSION)
 		tempPath := finalPath + ".tmp"
 
-		err = build(tempPath, files)
+		maxMemory := float64(*buildMemory) / 100
+		if maxMemory < 0 || maxMemory > 1 {
+			log.Fatal(errors.New("specified memory percentage out of bounds"))
+		}
+
+		err = buildDatabase(tempPath, files, maxMemory)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -67,7 +77,10 @@ func main() {
 
 	case "serve":
 
-		serveCommand.Parse(os.Args[2:])
+		err := serveCommand.Parse(os.Args[2:])
+		if err != nil {
+			log.Fatal(err)
+		}
 
 		finder, err := getLanguages()
 		if err != nil {

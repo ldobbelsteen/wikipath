@@ -3,8 +3,11 @@ package main
 import (
 	"database/sql"
 	"errors"
+	"log"
 	"path/filepath"
 	"regexp"
+	"strings"
+	"sync"
 )
 
 type Search struct {
@@ -49,27 +52,27 @@ func NewDatabase(path string, finder LanguageFinder) (*Database, error) {
 	}
 
 	// Prepare queries for performance reasons
-	pageToTitleQuery, err := conn.Prepare("SELECT title FROM pages WHERE id = ?")
+	pageToTitleQuery, err := conn.Prepare("SELECT title FROM titles WHERE page_id = ?")
 	if err != nil {
 		return nil, err
 	}
-	titleToPageQuery, err := conn.Prepare("SELECT id FROM pages WHERE title = ? LIMIT 1")
+	titleToPageQuery, err := conn.Prepare("SELECT page_id FROM titles WHERE title = ?")
 	if err != nil {
 		return nil, err
 	}
-	randomTitleQuery, err := conn.Prepare("SELECT title FROM pages WHERE id = (abs(random()) % (SELECT (SELECT max(id) FROM pages) + 1))")
+	randomTitleQuery, err := conn.Prepare("SELECT title FROM titles WHERE page_id = (abs(random()) % (SELECT (SELECT max(page_id) FROM titles) + 1))")
 	if err != nil {
 		return nil, err
 	}
-	followRedirQuery, err := conn.Prepare("SELECT redirect FROM pages WHERE id = ?")
+	followRedirQuery, err := conn.Prepare("SELECT target_id FROM redirects WHERE source_id = ?")
 	if err != nil {
 		return nil, err
 	}
-	incomingQuery, err := conn.Prepare("SELECT source FROM links WHERE target = ?")
+	incomingQuery, err := conn.Prepare("SELECT incoming_ids FROM incoming WHERE target_id = ?")
 	if err != nil {
 		return nil, err
 	}
-	outgoingQuery, err := conn.Prepare("SELECT target FROM links WHERE source = ?")
+	outgoingQuery, err := conn.Prepare("SELECT outgoing_ids FROM outgoing WHERE source_id = ?")
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +101,7 @@ func (db *Database) pageToTitle(page int64) (string, error) {
 	return title, nil
 }
 
-// Convert a page title to the corresponding ID
+// Convert a page title to the corresponding page ID
 func (db *Database) titleToPage(title string) (int64, error) {
 	var page int64
 	err := db.titleToPageQuery.QueryRow(title).Scan(&page)
@@ -112,51 +115,48 @@ func (db *Database) titleToPage(title string) (int64, error) {
 func (db *Database) randomTitle() string {
 	var title string
 	for title == "" {
-		db.randomTitleQuery.QueryRow().Scan(&title)
+		err := db.randomTitleQuery.QueryRow().Scan(&title)
+		if err != nil && err != sql.ErrNoRows {
+			log.Print("Error fetching random title: ", err)
+		}
 	}
 	return title
 }
 
 // Get the incoming links of a page
 func (db *Database) getIncoming(page int64) []int64 {
-	result := []int64{}
-	rows, err := db.incomingQuery.Query(page)
+	var incomingDelimited string
+	err := db.incomingQuery.QueryRow(page).Scan(&incomingDelimited)
 	if err != nil {
-		return result
-	}
-	defer rows.Close()
-
-	var id int64
-	for rows.Next() {
-		err := rows.Scan(&id)
-		if err != nil {
-			continue
+		if err != sql.ErrNoRows {
+			log.Print("Error fetching incoming links: ", err)
 		}
-		result = append(result, id)
+		return []int64{}
 	}
-
-	return result
+	incomingStrings := strings.Split(incomingDelimited, "|")
+	incoming := make([]int64, len(incomingStrings))
+	for index, str := range incomingStrings {
+		incoming[index] = parsePageID(str)
+	}
+	return incoming
 }
 
 // Get the outgoing links of a page
 func (db *Database) getOutgoing(page int64) []int64 {
-	result := []int64{}
-	rows, err := db.outgoingQuery.Query(page)
+	var outgoingDelimited string
+	err := db.outgoingQuery.QueryRow(page).Scan(&outgoingDelimited)
 	if err != nil {
-		return result
-	}
-	defer rows.Close()
-
-	var id int64
-	for rows.Next() {
-		err := rows.Scan(&id)
-		if err != nil {
-			continue
+		if err != sql.ErrNoRows {
+			log.Print("Error fetching outgoing links: ", err)
 		}
-		result = append(result, id)
+		return []int64{}
 	}
-
-	return result
+	outgoingStrings := strings.Split(outgoingDelimited, "|")
+	outgoing := make([]int64, len(outgoingStrings))
+	for index, str := range outgoingStrings {
+		outgoing[index] = parsePageID(str)
+	}
+	return outgoing
 }
 
 // Find all the paths of the shortest possible degree between two pages
@@ -164,14 +164,20 @@ func (db *Database) shortestPaths(search Search) [][]string {
 
 	// Follow redirect if the source is a redirect
 	var redirectedSource int64
-	db.followRedirQuery.QueryRow(search.source).Scan(&redirectedSource)
+	err := db.followRedirQuery.QueryRow(search.source).Scan(&redirectedSource)
+	if err != nil && err != sql.ErrNoRows {
+		log.Print("Error following redirect: ", err)
+	}
 	if redirectedSource != 0 {
 		search.source = redirectedSource
 	}
 
 	// Follow redirect if the target is a redirect
 	var redirectedTarget int64
-	db.followRedirQuery.QueryRow(search.target).Scan(&redirectedTarget)
+	err = db.followRedirQuery.QueryRow(search.target).Scan(&redirectedTarget)
+	if err != nil && err != sql.ErrNoRows {
+		log.Print("Error following redirect: ", err)
+	}
 	if redirectedTarget != 0 {
 		search.target = redirectedTarget
 	}
@@ -264,4 +270,45 @@ func (db *Database) shortestPaths(search Search) [][]string {
 
 	// Return empty path if none was found
 	return [][]string{}
+}
+
+type SearchCache struct {
+	data  map[*Search][][]string
+	keys  []*Search
+	start int
+	end   int
+	mutex sync.Mutex
+}
+
+func NewSearchCache(size int) *SearchCache {
+	return &SearchCache{
+		data: make(map[*Search][][]string, size),
+		keys: make([]*Search, size),
+	}
+}
+
+func (c *SearchCache) Store(search *Search, result [][]string) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	if _, alreadyExists := c.data[search]; !alreadyExists {
+		c.data[search] = result
+		c.keys[c.end] = search
+		c.end++
+		if c.end >= len(c.keys) {
+			c.end = 0
+		}
+		if c.end == c.start {
+			delete(c.data, c.keys[c.start])
+			c.start++
+			if c.start >= len(c.keys) {
+				c.start = 0
+			}
+		}
+	}
+}
+
+func (sc *SearchCache) Find(search *Search) [][]string {
+	sc.mutex.Lock()
+	defer sc.mutex.Unlock()
+	return sc.data[search]
 }

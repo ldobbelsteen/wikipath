@@ -3,6 +3,7 @@ package main
 import (
 	"embed"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"log"
 	"net/http"
@@ -30,12 +31,15 @@ func serve(databaseDir string, finder LanguageFinder, cacheSize int) error {
 		if !file.IsDir() && filepath.Ext(file.Name()) == FILE_EXTENSION {
 			database, err := NewDatabase(filepath.Join(databaseDir, file.Name()), finder)
 			if err != nil {
-				log.Print("Failed to open ", file.Name(), ": ", err)
+				log.Print("Failed to open and thus skipping ", file.Name(), ": ", err)
 				break
 			}
 			databaseList = append(databaseList, database)
 			databaseMap[database.LanguageCode] = database
 		}
+	}
+	if len(databaseList) == 0 {
+		return errors.New("no (valid) database(s) found")
 	}
 
 	// Handler for serving web files
@@ -49,7 +53,10 @@ func serve(databaseDir string, finder LanguageFinder, cacheSize int) error {
 	encodedDatabaseList, _ := json.Marshal(databaseList)
 	http.HandleFunc("/databases", func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
-		writer.Write(encodedDatabaseList)
+		_, err := writer.Write(encodedDatabaseList)
+		if err != nil {
+			log.Print("Error writing response: ", err)
+		}
 	})
 
 	// Handler for serving a random page title
@@ -66,7 +73,10 @@ func serve(databaseDir string, finder LanguageFinder, cacheSize int) error {
 			return
 		}
 
-		writer.Write([]byte(database.randomTitle()))
+		_, err := writer.Write([]byte(database.randomTitle()))
+		if err != nil {
+			log.Print("Error writing response: ", err)
+		}
 	})
 
 	// Handler for serving the shortest paths between two pages
@@ -118,18 +128,21 @@ func serve(databaseDir string, finder LanguageFinder, cacheSize int) error {
 		}
 
 		var paths [][]string
-		if cached := cache.Find(search); cached != nil {
+		if cached := cache.Find(&search); cached != nil {
 			paths = cached
 		} else {
 			start := time.Now()
 			paths = database.shortestPaths(search)
 			if time.Since(start).Seconds() > 2 {
-				cache.Store(search, paths)
+				cache.Store(&search, paths)
 			}
 		}
 
 		writer.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(writer).Encode(paths)
+		err = json.NewEncoder(writer).Encode(paths)
+		if err != nil {
+			log.Print("Error writing response: ", err)
+		}
 	})
 
 	// Start listening
