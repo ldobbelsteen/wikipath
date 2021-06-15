@@ -1,0 +1,8 @@
+*.sqlite3
+*.sqlite3.tmp
+*.sql.gz
+*.sql
+*.txt
+*.git
+node_modules
+build

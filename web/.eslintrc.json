@@ -1,0 +1,17 @@
+{
+	"extends": [
+		"eslint:recommended",
+		"plugin:react/recommended",
+		"plugin:react-hooks/recommended",
+		"plugin:jsx-a11y/recommended",
+		"plugin:import/errors",
+		"plugin:prettier/recommended"
+	],
+	"env": {
+		"browser": true
+	},
+	"parserOptions": {
+		"sourceType": "module",
+		"ecmaVersion": 2017
+	}
+}
