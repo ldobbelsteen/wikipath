@@ -37,6 +37,10 @@ type FileHash struct {
 
 // Download the latest 'page.sql.gz', 'pagelinks.sql.gz' and 'redirect.sql.gz' dump files to a directory
 func fetchDumpFiles(directory string, mirror string, language Language) (*LocalDumpFiles, error) {
+	err := os.MkdirAll(directory, 0755)
+	if err != nil {
+		return nil, err
+	}
 
 	log.Print("Fetching latest dump info...")
 	files, err := getLatestDumpInfo(language)

@@ -6,13 +6,13 @@ COPY web .
 RUN npm run build
 
 FROM golang:alpine AS bin-builder
-RUN apk add --no-cache build-base
 WORKDIR /build
+RUN apk add --no-cache build-base
 COPY . .
-COPY --from=web-builder /build/build web/build
 RUN go build
 
 FROM alpine
+WORKDIR /
+COPY --from=web-builder /build/dist /var/www/html
 COPY --from=bin-builder /build/wikipath /usr/bin/wikipath
-WORKDIR /databases
-CMD ["wikipath", "serve"]
+CMD ["wikipath", "serve", "--web", "/var/www/html"]

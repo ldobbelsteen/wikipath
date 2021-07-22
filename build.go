@@ -9,11 +9,10 @@ import (
 	"time"
 
 	"github.com/cheggaaa/pb/v3"
-	"github.com/pbnjay/memory"
 )
 
 // Build a new database from scratch using a set of dump files and the desired path of the database
-func buildDatabase(path string, files *LocalDumpFiles, maxMemoryFraction float64) error {
+func buildDatabase(path string, files *LocalDumpFiles, maxMemoryUsage uint64) error {
 
 	// Delete any previous database remains
 	err := deleteFile(path)
@@ -22,7 +21,7 @@ func buildDatabase(path string, files *LocalDumpFiles, maxMemoryFraction float64
 	}
 
 	// Create new database and open it
-	db, err := sql.Open("sqlite3", "file:"+path+"?_journal=MEMORY")
+	db, err := sql.Open("sqlite3", "file:"+path+"?_journal=OFF&_sync=OFF&_locking=EXCLUSIVE")
 	if err != nil {
 		return err
 	}
@@ -72,8 +71,8 @@ func buildDatabase(path string, files *LocalDumpFiles, maxMemoryFraction float64
 		return err
 	}
 	for page := range pageChan {
-		titler[page.title] = page.id
-		_, err := insertTitle.Exec(page.id, page.title)
+		titler[page.Title] = page.ID
+		_, err := insertTitle.Exec(page.ID, page.Title)
 		if err != nil {
 			return err
 		}
@@ -128,9 +127,9 @@ func buildDatabase(path string, files *LocalDumpFiles, maxMemoryFraction float64
 	bar.Finish()
 
 	// Parse the pagelinks dump file and store the incoming and outgoing links for all page IDs in
-	// a large cache. The cache is in-memory and can grow to be quite large. At the end all of the
+	// a large cache. The cache is in-memory and can grow to be quite large. At the end, all of the
 	// incoming and outgoing links are inserted into the database as text, where the IDs are delimited
-	// by a |. If the maximum memory usage is exceeded by the cache, it flushes part of its contents to
+	// by a '|'. If the maximum memory usage is exceeded by the cache, it flushes part of its contents to
 	// free up some space. This intermediate flushing is however not desirable, as it causes more inserts
 	// to be needed.
 	log.Print("Parsing link dump file...")
@@ -191,14 +190,13 @@ func buildDatabase(path string, files *LocalDumpFiles, maxMemoryFraction float64
 		bar.Finish()
 		return nil
 	}
-	maxMemoryBytes := uint64(float64(memory.TotalMemory()) * maxMemoryFraction)
 	exceedingMemory := false
 	go func() {
 		var info runtime.MemStats
 		for {
 			time.Sleep(time.Second)
 			runtime.ReadMemStats(&info)
-			exceedingMemory = info.Alloc >= maxMemoryBytes
+			exceedingMemory = info.Alloc >= maxMemoryUsage
 		}
 	}()
 	for link := range linkChan {
@@ -218,13 +216,6 @@ func buildDatabase(path string, files *LocalDumpFiles, maxMemoryFraction float64
 	}
 	log.Print("Ingesting links into database...")
 	err = flushCache(1.0)
-	if err != nil {
-		return err
-	}
-
-	// Create index to optimize getting a page ID by a page's title
-	log.Print("Creating title finding optimization index...")
-	_, err = tx.Exec("CREATE INDEX titler ON titles (title)")
 	if err != nil {
 		return err
 	}

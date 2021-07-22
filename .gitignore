@@ -1,8 +1,8 @@
-*.sqlite3
-*.sqlite3.tmp
-*.sql.gz
-*.sql
-*.txt
-*.git
-node_modules
-build
+.git
+
+wikipath
+databases
+dumps
+
+web/node_modules
+web/dist

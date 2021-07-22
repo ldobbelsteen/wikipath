@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"flag"
 	"log"
 	"os"
@@ -17,15 +16,16 @@ const LISTENING_PORT = 1789
 func main() {
 
 	buildCommand := flag.NewFlagSet("build", flag.ExitOnError)
-	buildOutput := buildCommand.String("output", ".", "Directory to output the database to")
-	buildDumps := buildCommand.String("dumps", "dumps", "Directory to download dump files to")
 	buildMirror := buildCommand.String("mirror", "https://dumps.wikimedia.org", "Mirror to download dumps from")
+	buildOutput := buildCommand.String("output", "databases", "Directory to output the database to")
+	buildDumps := buildCommand.String("dumps", "dumps", "Directory to download dump files to")
 	buildLanguage := buildCommand.String("language", "en", "Language to build database of")
-	buildMemory := buildCommand.Int("memory", 70, "Maximum usage percentage of total system memory")
+	buildMemory := buildCommand.Int("memory", 20, "Maximum memory usage in gigabytes")
 
 	serveCommand := flag.NewFlagSet("serve", flag.ExitOnError)
-	serveDatabases := serveCommand.String("databases", ".", "Parent directory of the database(s) to serve")
-	serveCache := serveCommand.Int("cache", 32, "The maximum search cache size per database in megabytes")
+	serveDatabases := serveCommand.String("databases", "databases", "Parent directory of the database(s) to serve")
+	serveWeb := serveCommand.String("web", "web/dist", "Directory of the bundled web files")
+	serveCache := serveCommand.Int("cache", 32, "Maximum search cache size in megabytes")
 
 	if len(os.Args) < 2 {
 		log.Fatal("expected 'build' or 'serve' subcommands")
@@ -39,6 +39,8 @@ func main() {
 			log.Fatal(err)
 		}
 		start := time.Now()
+
+		log.Print("WARNING: maximum memory usage is ", *buildMemory, "GB, make sure the system has this memory available")
 
 		languages, err := GetLanguages()
 		if err != nil {
@@ -58,12 +60,7 @@ func main() {
 		finalPath := filepath.Join(*buildOutput, language.Database+"-"+files.dateString+FILE_EXTENSION)
 		tempPath := finalPath + ".tmp"
 
-		maxMemory := float64(*buildMemory) / 100
-		if maxMemory < 0 || maxMemory > 1 {
-			log.Fatal(errors.New("specified memory percentage out of bounds"))
-		}
-
-		err = buildDatabase(tempPath, files, maxMemory)
+		err = buildDatabase(tempPath, files, uint64(*buildMemory)*1024*1024)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -87,7 +84,17 @@ func main() {
 			log.Fatal(err)
 		}
 
-		err = serve(*serveDatabases, languages, *serveCache*1024*1024)
+		err = os.MkdirAll(*serveDatabases, 0755)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		err = os.MkdirAll(*serveWeb, 0755)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		err = serve(*serveDatabases, *serveWeb, languages, *serveCache*1024*1024)
 		if err != nil {
 			log.Fatal(err)
 		}

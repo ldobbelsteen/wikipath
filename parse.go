@@ -21,8 +21,8 @@ type PageID = int64
 type PageTitle = string
 
 type Page struct {
-	id    PageID
-	title PageTitle
+	ID    PageID    `json:"id"`
+	Title PageTitle `json:"title"`
 }
 
 type Redir struct {

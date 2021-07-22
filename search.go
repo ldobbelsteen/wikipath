@@ -6,36 +6,42 @@ import (
 	"log"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
-	"sync"
 )
 
 type Search struct {
-	source PageID
-	target PageID
+	source       PageID
+	target       PageID
+	languageCode string
+}
+
+type Graph struct {
+	PageNames     map[PageID]PageTitle `json:"pageNames"`
+	OutgoingLinks map[PageID][]PageID  `json:"outgoingLinks"`
+	PathCount     int                  `json:"pathCount"`
+	PathDegree    int                  `json:"pathDegree"`
+	SourcePage    PageID               `json:"sourcePage"`
+	TargetPage    PageID               `json:"targetPage"`
+	SourceIsRedir bool                 `json:"sourceIsRedir"`
+	TargetIsRedir bool                 `json:"targetIsRedir"`
+	LanguageCode  string               `json:"languageCode"`
 }
 
 type Database struct {
 	connection       *sql.DB
 	pageToTitleQuery *sql.Stmt
-	titleToPageQuery *sql.Stmt
-	randomTitleQuery *sql.Stmt
+	randomPageQuery  *sql.Stmt
 	followRedirQuery *sql.Stmt
-	incomingQuery    *sql.Stmt
-	outgoingQuery    *sql.Stmt
-	DumpDate         string `json:"date"`
-	LanguageName     string `json:"language"`
-	LanguageCode     string `json:"code"`
-	cacheMutex       sync.Mutex
-	cacheSize        int
-	cacheMax         int
-	cacheIndex       int
-	cacheKeys        []Search
-	cacheData        map[Search][]byte
+	getIncomingQuery *sql.Stmt
+	getOutgoingQuery *sql.Stmt
+	DumpDate         string `json:"dumpDate"`
+	LanguageName     string `json:"languageName"`
+	LanguageCode     string `json:"languageCode"`
 }
 
 // Open a database for running queries on
-func NewDatabase(path string, languages Languages, cacheSize int) (*Database, error) {
+func NewDatabase(path string, languages Languages) (*Database, error) {
 
 	// Open the database in read-only mode
 	conn, err := sql.Open("sqlite3", "file:"+path+"?mode=ro")
@@ -61,11 +67,7 @@ func NewDatabase(path string, languages Languages, cacheSize int) (*Database, er
 	if err != nil {
 		return nil, err
 	}
-	titleToPageQuery, err := conn.Prepare("SELECT page_id FROM titles WHERE title = ?")
-	if err != nil {
-		return nil, err
-	}
-	randomTitleQuery, err := conn.Prepare("SELECT title FROM titles WHERE page_id = (abs(random()) % (SELECT (SELECT max(page_id) FROM titles) + 1))")
+	randomTitleQuery, err := conn.Prepare("SELECT page_id, title FROM titles WHERE page_id = (abs(random()) % (SELECT (SELECT max(page_id) FROM titles) + 1))")
 	if err != nil {
 		return nil, err
 	}
@@ -85,17 +87,13 @@ func NewDatabase(path string, languages Languages, cacheSize int) (*Database, er
 	return &Database{
 		connection:       conn,
 		pageToTitleQuery: pageToTitleQuery,
-		titleToPageQuery: titleToPageQuery,
-		randomTitleQuery: randomTitleQuery,
+		randomPageQuery:  randomTitleQuery,
 		followRedirQuery: followRedirQuery,
-		incomingQuery:    incomingQuery,
-		outgoingQuery:    outgoingQuery,
+		getIncomingQuery: incomingQuery,
+		getOutgoingQuery: outgoingQuery,
 		DumpDate:         info[2],
 		LanguageName:     language.Name,
 		LanguageCode:     language.Code,
-		cacheMax:         cacheSize,
-		cacheKeys:        []Search{},
-		cacheData:        map[Search][]byte{},
 	}, nil
 }
 
@@ -109,66 +107,51 @@ func (db *Database) PageToTitle(page PageID) (PageTitle, error) {
 	return title, nil
 }
 
-// Convert a page title to the corresponding page ID
-func (db *Database) TitleToPage(title PageTitle) (PageID, error) {
-	var page PageID
-	err := db.titleToPageQuery.QueryRow(title).Scan(&page)
-	if err != nil {
-		return 0, err
-	}
-	return page, nil
-}
-
-// Get a random page title
-func (db *Database) RandomTitle() PageTitle {
+// Pick a random page from all available pages
+func (db *Database) RandomPage() Page {
+	var id PageID
 	var title PageTitle
-	for title == "" {
-		err := db.randomTitleQuery.QueryRow().Scan(&title)
+	for id == 0 || title == "" {
+		err := db.randomPageQuery.QueryRow().Scan(&id, &title)
 		if err != nil && err != sql.ErrNoRows {
-			log.Print("Error fetching random title: ", err)
+			log.Print("Error fetching random page: ", err)
 		}
 	}
-	return title
+	return Page{ID: id, Title: title}
 }
 
-// Get the incoming links of a page
-func (db *Database) GetIncoming(page PageID) []PageID {
-	var incomingDelimited string
-	err := db.incomingQuery.QueryRow(page).Scan(&incomingDelimited)
+// Get the incoming or outgoing links of a page
+func (db *Database) GetLinks(page PageID, outgoing bool) []PageID {
+	var delimited string
+	var err error
+	if outgoing {
+		err = db.getOutgoingQuery.QueryRow(page).Scan(&delimited)
+	} else {
+		err = db.getIncomingQuery.QueryRow(page).Scan(&delimited)
+	}
 	if err != nil {
 		if err != sql.ErrNoRows {
-			log.Print("Error fetching incoming links: ", err)
+			log.Print("Error fetching links: ", err)
 		}
 		return []PageID{}
 	}
-	incomingStrings := strings.Split(incomingDelimited, "|")
-	incoming := make([]PageID, len(incomingStrings))
-	for index, str := range incomingStrings {
-		incoming[index] = parsePageID(str)
+	strings := strings.Split(delimited, "|")
+	ids := make([]PageID, len(strings))
+	for index, str := range strings {
+		ids[index] = parsePageID(str)
 	}
-	return incoming
-}
-
-// Get the outgoing links of a page
-func (db *Database) GetOutgoing(page PageID) []PageID {
-	var outgoingDelimited PageTitle
-	err := db.outgoingQuery.QueryRow(page).Scan(&outgoingDelimited)
-	if err != nil {
-		if err != sql.ErrNoRows {
-			log.Print("Error fetching outgoing links: ", err)
-		}
-		return []PageID{}
-	}
-	outgoingStrings := strings.Split(outgoingDelimited, "|")
-	outgoing := make([]PageID, len(outgoingStrings))
-	for index, str := range outgoingStrings {
-		outgoing[index] = parsePageID(str)
-	}
-	return outgoing
+	return ids
 }
 
 // Find the paths of the shortest possible degree between two pages
-func (db *Database) ShortestPaths(search Search) [][]PageID {
+func (db *Database) ShortestPaths(search Search) Graph {
+
+	// Initialize graph
+	graph := Graph{
+		PageNames:     map[PageID]PageTitle{},
+		OutgoingLinks: map[PageID][]PageID{},
+		LanguageCode:  db.LanguageCode,
+	}
 
 	// Follow redirect if the source is a redirect
 	var redirectedSource PageID
@@ -178,7 +161,9 @@ func (db *Database) ShortestPaths(search Search) [][]PageID {
 	}
 	if redirectedSource != 0 {
 		search.source = redirectedSource
+		graph.SourceIsRedir = true
 	}
+	graph.SourcePage = search.source
 
 	// Follow redirect if the target is a redirect
 	var redirectedTarget PageID
@@ -188,9 +173,11 @@ func (db *Database) ShortestPaths(search Search) [][]PageID {
 	}
 	if redirectedTarget != 0 {
 		search.target = redirectedTarget
+		graph.TargetIsRedir = true
 	}
+	graph.TargetPage = search.target
 
-	// Variables necessary for the search
+	// Variables necessary for the search from both sides
 	forwardParents := map[PageID][]PageID{search.source: {}}
 	backwardParents := map[PageID][]PageID{search.target: {}}
 	forwardQueue := []PageID{search.source}
@@ -199,13 +186,18 @@ func (db *Database) ShortestPaths(search Search) [][]PageID {
 	forwardDepth := 0
 	backwardDepth := 0
 
+	// If the source is same as target, skip search
+	if search.source == search.target {
+		overlapping[search.source] = true
+	}
+
 	// Run bidirectional breadth-first search until the searches intersect
 	for len(overlapping) == 0 && len(forwardQueue) > 0 && len(backwardQueue) > 0 {
 		newQueue := []PageID{}
 		newParents := map[PageID][]PageID{}
 		if len(forwardQueue) < len(backwardQueue) {
 			for _, page := range forwardQueue {
-				for _, out := range db.GetOutgoing(page) {
+				for _, out := range db.GetLinks(page, true) {
 					if _, visited := forwardParents[out]; !visited {
 						newQueue = append(newQueue, out)
 						newParents[out] = append(newParents[out], page)
@@ -222,7 +214,7 @@ func (db *Database) ShortestPaths(search Search) [][]PageID {
 			forwardDepth++
 		} else {
 			for _, page := range backwardQueue {
-				for _, in := range db.GetIncoming(page) {
+				for _, in := range db.GetLinks(page, false) {
 					if _, visited := backwardParents[in]; !visited {
 						newQueue = append(newQueue, in)
 						newParents[in] = append(newParents[in], page)
@@ -240,106 +232,60 @@ func (db *Database) ShortestPaths(search Search) [][]PageID {
 		}
 	}
 
-	// Extract all of the possible paths from the search
-	paths := [][]PageID{}
-	pathLength := backwardDepth + forwardDepth + 1
-	for overlap := range overlapping {
-		forwardPaths := db.ExtractPaths(overlap, forwardParents)
-		backwardPaths := db.ExtractPaths(overlap, backwardParents)
-		for _, forwardPath := range forwardPaths {
-			for _, backwardPath := range backwardPaths {
-				fullPath := make([]PageID, pathLength)
-				for index := 0; index < len(fullPath); index++ {
-					if index < len(forwardPath) {
-						reverseIndex := len(forwardPath) - index - 1
-						fullPath[index] = forwardPath[reverseIndex]
-					} else if index == len(forwardPath) {
-						fullPath[index] = overlap
+	// Recursively backtrack in either the forward or backward direction
+	var backtrack func(PageID, map[PageID]int, bool) int
+	backtrack = func(page PageID, counts map[PageID]int, forward bool) int {
+		if _, occurred := graph.PageNames[page]; !occurred {
+			title, err := db.PageToTitle(page)
+			if err != nil {
+				title = "Error"
+			}
+			graph.PageNames[page] = title
+		}
+		var parents []int64
+		if forward {
+			parents = backwardParents[page]
+		} else {
+			parents = forwardParents[page]
+		}
+		if len(parents) > 0 {
+			duplicates := map[PageID]bool{}
+			for _, parent := range parents {
+				if !duplicates[parent] {
+					duplicates[parent] = true
+					if forward {
+						graph.OutgoingLinks[page] = append(graph.OutgoingLinks[page], parent)
 					} else {
-						offsetIndex := index - len(forwardPath) - 1
-						fullPath[index] = backwardPath[offsetIndex]
+						graph.OutgoingLinks[parent] = append(graph.OutgoingLinks[parent], page)
+					}
+					if count, isCounted := counts[parent]; isCounted {
+						counts[page] += count
+					} else {
+						counts[page] += backtrack(parent, counts, forward)
 					}
 				}
-				paths = append(paths, fullPath)
 			}
-		}
-	}
-
-	return paths
-}
-
-// Backtrack from a page back to the source/target and return all of the possible paths
-func (db *Database) ExtractPaths(page PageID, parents map[PageID][]PageID) [][]PageID {
-	paths := [][]PageID{}
-	var backtrack func(PageID, []PageID)
-	backtrack = func(page PageID, path []PageID) {
-		if allParents := parents[page]; len(allParents) == 0 {
-			paths = append(paths, path)
+			return counts[page]
 		} else {
-			occured := map[PageID]bool{}
-			for _, parent := range allParents {
-				if !occured[parent] {
-					occured[parent] = true
-					duplicate := make([]PageID, len(path), len(path)+1)
-					copy(duplicate, path)
-					duplicate = append(duplicate, parent)
-					backtrack(parent, duplicate)
-				}
-			}
+			return 1
 		}
 	}
-	backtrack(page, []PageID{})
-	return paths
-}
 
-// Convert the page IDs in a path with their corresponding titles
-func (db *Database) PathToTitles(path []PageID) []PageTitle {
-	result := make([]PageTitle, len(path))
-	for index, page := range path {
-		title, err := db.PageToTitle(page)
-		if err != nil {
-			title = "Error"
-		}
-		result[index] = title
+	// Backtrack from all overlapping nodes. Stores all page names and links
+	// in the graph in the process. Also keeps track of the total number of paths.
+	graph.PathDegree = forwardDepth + backwardDepth
+	forwardPathCount := map[PageID]int{}
+	backwardPathCount := map[PageID]int{}
+	for overlap := range overlapping {
+		forwardPathCount := backtrack(overlap, forwardPathCount, true)
+		backwardPathCount := backtrack(overlap, backwardPathCount, false)
+		graph.PathCount += forwardPathCount * backwardPathCount
 	}
-	return result
-}
 
-// Convert the page IDs in a slice of paths with their corresponding titles
-func (db *Database) PathsToTitles(paths [][]PageID) [][]PageTitle {
-	result := make([][]PageTitle, len(paths))
-	for index, path := range paths {
-		result[index] = db.PathToTitles(path)
+	// Sort all links to make the result deterministic
+	for _, outgoing := range graph.OutgoingLinks {
+		sort.Slice(outgoing, func(i, j int) bool { return outgoing[i] < outgoing[j] })
 	}
-	return result
-}
 
-// Store a search result into the database's internal cache
-func (db *Database) CacheSet(search Search, result []byte) {
-	db.cacheMutex.Lock()
-	defer db.cacheMutex.Unlock()
-	if _, alreadyExists := db.cacheData[search]; !alreadyExists {
-		db.cacheData[search] = result
-		db.cacheSize += len(result)
-
-		if db.cacheIndex < len(db.cacheKeys) {
-			db.cacheSize -= len(db.cacheData[db.cacheKeys[db.cacheIndex]])
-			delete(db.cacheData, db.cacheKeys[db.cacheIndex])
-			db.cacheKeys[db.cacheIndex] = search
-		} else {
-			db.cacheKeys = append(db.cacheKeys, search)
-		}
-		db.cacheIndex++
-
-		if db.cacheSize > db.cacheMax && db.cacheIndex == len(db.cacheKeys) {
-			db.cacheIndex = 0
-		}
-	}
-}
-
-// Get a search result from the database's internal cache
-func (db *Database) CacheGet(search Search) []byte {
-	db.cacheMutex.Lock()
-	defer db.cacheMutex.Unlock()
-	return db.cacheData[search]
+	return graph
 }

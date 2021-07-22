@@ -1,27 +1,19 @@
 package main
 
 import (
-	"embed"
 	"encoding/json"
 	"errors"
-	"io/fs"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"time"
-
-	"github.com/julienschmidt/httprouter"
 )
 
-//nolint
-//go:embed web/build
-var web embed.FS
-
 // Serve a set of databases over a web interface
-func serve(dbDir string, languages Languages, cacheSize int) error {
-	router := httprouter.New()
+func serve(dbDir string, webDir string, languages Languages, cacheSize int) error {
+	mux := http.NewServeMux()
 
 	// List all files in the database directory
 	files, err := os.ReadDir(dbDir)
@@ -33,7 +25,7 @@ func serve(dbDir string, languages Languages, cacheSize int) error {
 	databases := map[string]*Database{}
 	for _, file := range files {
 		if !file.IsDir() && filepath.Ext(file.Name()) == FILE_EXTENSION {
-			database, err := NewDatabase(filepath.Join(dbDir, file.Name()), languages, cacheSize)
+			database, err := NewDatabase(filepath.Join(dbDir, file.Name()), languages)
 			if err != nil {
 				log.Print("Failed to open and thus skipping ", file.Name(), ": ", err)
 				break
@@ -41,16 +33,20 @@ func serve(dbDir string, languages Languages, cacheSize int) error {
 			databases[database.LanguageCode] = database
 		}
 	}
+
+	// If no databases were found, exit
 	if len(databases) == 0 {
 		return errors.New("no valid database(s) found")
 	}
 
-	// Add handler for serving web files
-	web, err := fs.Sub(web, "web/build")
+	// Create search result cache
+	cache, err := NewSearchCache(cacheSize)
 	if err != nil {
 		return err
 	}
-	router.ServeFiles("/*filepath", http.FS(web))
+
+	// Add handler for serving web files
+	mux.Handle("/", http.FileServer(http.Dir(webDir)))
 
 	// Prepare a list of the databases in marshalled form
 	marshalledDatabases := func() []byte {
@@ -63,71 +59,83 @@ func serve(dbDir string, languages Languages, cacheSize int) error {
 	}()
 
 	// Add handler for serving the list of databases
-	router.POST("/databases", func(writer http.ResponseWriter, _ *http.Request, _ httprouter.Params) {
+	mux.HandleFunc("/databases", func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
-		_, err := writer.Write(marshalledDatabases)
-		if err != nil {
-			log.Print("Error writing database list response: ", err)
-		}
+		writer.Write(marshalledDatabases)
 	})
 
 	// Add handler for serving a random page title
-	router.POST("/random/:language", func(writer http.ResponseWriter, _ *http.Request, params httprouter.Params) {
-		database, supported := databases[params.ByName("language")]
+	mux.HandleFunc("/random", func(writer http.ResponseWriter, request *http.Request) {
+		languageCode := request.URL.Query().Get("language")
+		if languageCode == "" {
+			http.Error(writer, "no language specified", http.StatusBadRequest)
+			return
+		}
+		database, supported := databases[languageCode]
 		if !supported {
 			http.Error(writer, "no database for specified language", http.StatusNotFound)
 			return
 		}
-
-		_, err := writer.Write([]byte(database.RandomTitle()))
-		if err != nil {
-			log.Print("Error writing random title response: ", err)
-		}
+		writer.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(writer).Encode(database.RandomPage())
 	})
 
 	// Handler for serving the shortest paths between two pages
-	router.POST("/paths/:language/:source/:target", func(writer http.ResponseWriter, _ *http.Request, params httprouter.Params) {
-		database, supported := databases[params.ByName("language")]
+	mux.HandleFunc("/paths", func(writer http.ResponseWriter, request *http.Request) {
+		parameters := request.URL.Query()
+
+		languageCode := parameters.Get("language")
+		if languageCode == "" {
+			http.Error(writer, "no language specified", http.StatusBadRequest)
+			return
+		}
+		sourceRaw := parameters.Get("source")
+		if sourceRaw == "" {
+			http.Error(writer, "no source specified", http.StatusBadRequest)
+			return
+		}
+		targetRaw := parameters.Get("target")
+		if targetRaw == "" {
+			http.Error(writer, "no target specified", http.StatusBadRequest)
+			return
+		}
+
+		source := parsePageID(sourceRaw)
+		if source == 0 {
+			http.Error(writer, "source is not a page ID", http.StatusBadRequest)
+			return
+		}
+		target := parsePageID(targetRaw)
+		if target == 0 {
+			http.Error(writer, "target is not a page ID", http.StatusBadRequest)
+			return
+		}
+
+		database, supported := databases[languageCode]
 		if !supported {
 			http.Error(writer, "no database for specified language", http.StatusNotFound)
 			return
 		}
 
-		source, err := database.TitleToPage(params.ByName("source"))
-		if err != nil {
-			http.Error(writer, "source page not found", http.StatusNotFound)
+		search := Search{source: source, target: target, languageCode: languageCode}
+		if cached := cache.Fetch(search); cached != nil {
+			writer.Header().Set("Content-Type", "application/json")
+			writer.Write(cached)
 			return
 		}
 
-		target, err := database.TitleToPage(params.ByName("target"))
-		if err != nil {
-			http.Error(writer, "target page not found", http.StatusNotFound)
-			return
-		}
-
-		var result []byte
-		search := Search{source: source, target: target}
-		if cached := database.CacheGet(search); cached != nil {
-			result = cached
-		} else {
-			start := time.Now()
-			paths := database.ShortestPaths(search)
-			titles := database.PathsToTitles(paths)
-			marshal, _ := json.Marshal(titles)
-			if time.Since(start).Seconds() > 2 {
-				database.CacheSet(search, result)
-			}
-			result = marshal
-		}
-
+		start := time.Now()
+		graph := database.ShortestPaths(search)
+		marshal, _ := json.Marshal(graph)
 		writer.Header().Set("Content-Type", "application/json")
-		_, err = writer.Write(result)
-		if err != nil {
-			log.Print("Error writing shortest path response: ", err)
+		writer.Write(marshal)
+
+		if time.Since(start).Seconds() > 2 {
+			cache.Store(search, marshal)
 		}
 	})
 
-	// Start listening
+	// Start listening on the default port
 	log.Print("Started listening on port ", LISTENING_PORT, "...")
-	return http.ListenAndServe(":"+strconv.Itoa(LISTENING_PORT), router)
+	return http.ListenAndServe(":"+strconv.Itoa(LISTENING_PORT), mux)
 }

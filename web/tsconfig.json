@@ -1,0 +1,9 @@
+{
+    "compilerOptions": {
+        "esModuleInterop": true,
+        "jsx": "preserve",
+        "lib": ["DOM", "es2017"],
+        "strict": true,
+    },
+    "include": ["src", "src/custom.d.ts"]
+}
