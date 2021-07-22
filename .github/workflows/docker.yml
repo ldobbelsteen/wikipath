@@ -16,9 +16,9 @@ jobs:
       - id: metadata
         uses: docker/metadata-action@v3
         with:
-          images: ${{ ghcr.io }}/${{ github.repository }}{% raw %}
+          images: ghcr.io/${{ github.repository }}
       - uses: docker/build-push-action@v2
         with:
           push: true
-          tags: {% raw %}${{ steps.metadata.outputs.tags }}
+          tags: ${{ steps.metadata.outputs.tags }}
           labels: ${{ steps.metadata.outputs.labels }}
