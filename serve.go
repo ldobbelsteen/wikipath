@@ -61,7 +61,10 @@ func serve(dbDir string, webDir string, languages Languages, cacheSize int) erro
 	// Add handler for serving the list of databases
 	mux.HandleFunc("/databases", func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
-		writer.Write(marshalledDatabases)
+		_, err := writer.Write(marshalledDatabases)
+		if err != nil {
+			log.Print("Error writing databases response...")
+		}
 	})
 
 	// Add handler for serving a random page title
@@ -77,7 +80,10 @@ func serve(dbDir string, webDir string, languages Languages, cacheSize int) erro
 			return
 		}
 		writer.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(writer).Encode(database.RandomPage())
+		err := json.NewEncoder(writer).Encode(database.RandomPage())
+		if err != nil {
+			log.Print("Error writing random page response...")
+		}
 	})
 
 	// Handler for serving the shortest paths between two pages
@@ -120,7 +126,10 @@ func serve(dbDir string, webDir string, languages Languages, cacheSize int) erro
 		search := Search{source: source, target: target, languageCode: languageCode}
 		if cached := cache.Fetch(search); cached != nil {
 			writer.Header().Set("Content-Type", "application/json")
-			writer.Write(cached)
+			_, err := writer.Write(cached)
+			if err != nil {
+				log.Print("Failed to write cached graph result response...")
+			}
 			return
 		}
 
@@ -128,7 +137,10 @@ func serve(dbDir string, webDir string, languages Languages, cacheSize int) erro
 		graph := database.ShortestPaths(search)
 		marshal, _ := json.Marshal(graph)
 		writer.Header().Set("Content-Type", "application/json")
-		writer.Write(marshal)
+		_, err := writer.Write(marshal)
+		if err != nil {
+			log.Print("Failed to write graph result response...")
+		}
 
 		if time.Since(start).Seconds() > 2 {
 			cache.Store(search, marshal)
