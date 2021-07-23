@@ -39,6 +39,7 @@ const theme: Autosuggest.Theme = {
 };
 
 export default function SearchInput(props: {
+  id: string;
   input: string;
   invalid: boolean;
   languageCode: string;
@@ -88,6 +89,7 @@ export default function SearchInput(props: {
   return (
     <div className="autosuggest">
       <Autosuggest
+        id={props.id}
         theme={theme}
         suggestions={suggestions}
         getSuggestionValue={(d) => d.title}

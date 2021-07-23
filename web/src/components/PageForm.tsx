@@ -73,6 +73,7 @@ export default function PageForm(props: {
       <div>
         <LanguageSelect disabled={props.isLoading} selected={setLanguageCode} />
         <SearchInput
+          id={"source"}
           input={sourceInput}
           invalid={sourceInvalid}
           languageCode={languageCode}
@@ -91,6 +92,7 @@ export default function PageForm(props: {
           onClick={swap}
         ></input>
         <SearchInput
+          id={"target"}
           input={targetInput}
           invalid={targetInvalid}
           languageCode={languageCode}
