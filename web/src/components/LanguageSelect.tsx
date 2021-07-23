@@ -40,6 +40,7 @@ export default function LanguageSelect(props: {
 
   return (
     <select
+      name="Language"
       value={index}
       disabled={props.disabled || options.length === 0}
       onChange={(event) => setIndex(parseInt(event.target.value))}
