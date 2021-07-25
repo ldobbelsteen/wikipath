@@ -60,7 +60,7 @@ func main() {
 		finalPath := filepath.Join(*buildOutput, language.Database+"-"+files.dateString+FILE_EXTENSION)
 		tempPath := finalPath + ".tmp"
 
-		err = buildDatabase(tempPath, files, uint64(*buildMemory)*1024*1024)
+		err = buildDatabase(tempPath, files, uint64(*buildMemory)*1024*1024*1024)
 		if err != nil {
 			log.Fatal(err)
 		}
