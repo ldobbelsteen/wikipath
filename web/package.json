@@ -1,6 +1,6 @@
 {
 	"scripts": {
-		"lint": "eslint . --ignore-path ../.gitignore --ext .ts,.tsx && tsc --noEmit",
+		"lint": "eslint . --ignore-path ../.gitignore --ext .ts,.tsx --max-warnings 0 && tsc --noEmit",
 		"build": "vite build"
 	},
 	"dependencies": {
