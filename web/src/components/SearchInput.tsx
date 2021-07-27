@@ -1,8 +1,7 @@
+import { Page, getRandomPage, getSuggestions } from "../helpers/api";
 import React, { useRef, useState } from "react";
-import { getRandomPage, getSuggestions } from "../helpers/api";
 import Autosuggest from "react-autosuggest";
 import Dice from "../static/dice.svg";
-import { Page } from "../helpers/api";
 import { weakStringEquals } from "../helpers/misc";
 
 const theme: Autosuggest.Theme = {

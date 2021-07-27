@@ -1,6 +1,5 @@
+import { Database, getAvailableDatabases } from "../helpers/api";
 import React, { useEffect, useState } from "react";
-import { Database } from "../helpers/api";
-import { getAvailableDatabases } from "../helpers/api";
 
 export default function LanguageSelect(props: {
   disabled: boolean;
