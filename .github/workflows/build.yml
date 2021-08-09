@@ -1,25 +1,8 @@
 name: build
 on: push
 jobs:
-  # Check for Go lint warnings
-  lint-go:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2
-      - uses: golangci/golangci-lint-action@v2
-  
-  # Check for JavaScript lint warnings
-  lint-js:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2
-      - run: npm install --prefix web
-      - run: npm run lint --prefix web
-  
-  # Build Docker image and push if main branch
   docker:
     runs-on: ubuntu-latest
-    needs: [lint-go, lint-js]
     permissions:
       contents: read
       packages: write

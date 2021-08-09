@@ -1,18 +1,20 @@
 FROM node:alpine AS web-builder
 WORKDIR /build
-COPY web/package.json web/package-lock.json ./
+COPY . .
+WORKDIR /build/web
 RUN npm install
-COPY web .
+RUN npm run lint
 RUN npm run build
 
 FROM golang:alpine AS bin-builder
-WORKDIR /build
 RUN apk add --no-cache build-base
+WORKDIR /build
 COPY . .
+RUN go test
 RUN go build
 
 FROM alpine
 WORKDIR /
-COPY --from=web-builder /build/dist /var/www/html
+COPY --from=web-builder /build/web/dist /var/www/html
 COPY --from=bin-builder /build/wikipath /usr/bin/wikipath
 CMD ["wikipath", "serve", "--web", "/var/www/html"]
