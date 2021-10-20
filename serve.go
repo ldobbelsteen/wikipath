@@ -2,94 +2,61 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
-	"time"
 )
 
-// Serve a set of databases over a web interface
-func serve(dbDir string, webDir string, languages Languages, cacheSize int) error {
+// Serve a set of databases over the web interface
+func serve(databaseDir string, webDir string) error {
 	mux := http.NewServeMux()
 
-	// List all files in the database directory
-	files, err := os.ReadDir(dbDir)
+	// Open the databases in the database directory
+	files, err := os.ReadDir(databaseDir)
 	if err != nil {
 		return err
 	}
-
-	// Open all databases and map from language code to the corresponding database
 	databases := map[string]*Database{}
 	for _, file := range files {
-		if !file.IsDir() && filepath.Ext(file.Name()) == FILE_EXTENSION {
-			database, err := NewDatabase(filepath.Join(dbDir, file.Name()), languages)
+		if !file.IsDir() && filepath.Ext(file.Name()) == DatabaseFileExtension {
+			database, err := openDatabase(filepath.Join(databaseDir, file.Name()))
 			if err != nil {
-				log.Print("Failed to open and thus skipping ", file.Name(), ": ", err)
-				break
+				log.Print("failed to open and thus skipping ", file.Name(), ": ", err)
+				continue
 			}
-			databases[database.LanguageCode] = database
+			databases[database.LangCode] = database
 		}
-	}
-
-	// If no databases were found, exit
-	if len(databases) == 0 {
-		return errors.New("no valid database(s) found")
-	}
-
-	// Create search result cache
-	cache, err := NewSearchCache(cacheSize)
-	if err != nil {
-		return err
 	}
 
 	// Add handler for serving web files
 	mux.Handle("/", http.FileServer(http.Dir(webDir)))
 
-	// Prepare a list of the databases in marshalled form
-	marshalledDatabases := func() []byte {
-		databaseSlice := []*Database{}
+	// Prepare a list of available databases in JSON marshalled form
+	jsonDatabases := func() []byte {
+		slc := make([]*Database, 0, len(databases))
 		for _, database := range databases {
-			databaseSlice = append(databaseSlice, database)
+			slc = append(slc, database)
 		}
-		marshalled, _ := json.Marshal(databaseSlice)
+		marshalled, err := json.Marshal(slc)
+		if err != nil {
+			log.Fatal("failed to marshal databases: ", err)
+		}
 		return marshalled
 	}()
 
 	// Add handler for serving the list of databases
 	mux.HandleFunc("/databases", func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
-		_, err := writer.Write(marshalledDatabases)
-		if err != nil {
-			log.Print("Error writing databases response...")
-		}
-	})
-
-	// Add handler for serving a random page title
-	mux.HandleFunc("/random", func(writer http.ResponseWriter, request *http.Request) {
-		languageCode := request.URL.Query().Get("language")
-		if languageCode == "" {
-			http.Error(writer, "no language specified", http.StatusBadRequest)
-			return
-		}
-		database, supported := databases[languageCode]
-		if !supported {
-			http.Error(writer, "no database for specified language", http.StatusNotFound)
-			return
-		}
-		writer.Header().Set("Content-Type", "application/json")
-		err := json.NewEncoder(writer).Encode(database.RandomPage())
-		if err != nil {
-			log.Print("Error writing random page response...")
-		}
+		writer.Write(jsonDatabases)
 	})
 
 	// Handler for serving the shortest paths between two pages
 	mux.HandleFunc("/paths", func(writer http.ResponseWriter, request *http.Request) {
 		parameters := request.URL.Query()
 
+		// Extract the URL parameters
 		languageCode := parameters.Get("language")
 		if languageCode == "" {
 			http.Error(writer, "no language specified", http.StatusBadRequest)
@@ -106,6 +73,7 @@ func serve(dbDir string, webDir string, languages Languages, cacheSize int) erro
 			return
 		}
 
+		// Parse the IDs and return if not valid
 		source := parsePageID(sourceRaw)
 		if source == 0 {
 			http.Error(writer, "source is not a page ID", http.StatusBadRequest)
@@ -117,37 +85,41 @@ func serve(dbDir string, webDir string, languages Languages, cacheSize int) erro
 			return
 		}
 
+		// Get the database corresponding to the language code
 		database, supported := databases[languageCode]
 		if !supported {
 			http.Error(writer, "no database for specified language", http.StatusNotFound)
 			return
 		}
 
-		search := Search{source: source, target: target, languageCode: languageCode}
-		if cached := cache.Fetch(search); cached != nil {
-			writer.Header().Set("Content-Type", "application/json")
-			_, err := writer.Write(cached)
-			if err != nil {
-				log.Print("Failed to write cached graph result response...")
-			}
+		// Check if IDs are too large anyways
+		if source > database.maxPageID {
+			http.Error(writer, "source ID is too large", http.StatusBadRequest)
+			return
+		}
+		if target > database.maxPageID {
+			http.Error(writer, "target ID is too large", http.StatusBadRequest)
 			return
 		}
 
-		start := time.Now()
-		graph := database.ShortestPaths(search)
-		marshal, _ := json.Marshal(graph)
-		writer.Header().Set("Content-Type", "application/json")
-		_, err := writer.Write(marshal)
+		// Find the shortest path and write the result
+		graph, err := database.shortestPaths(source, target, languageCode)
 		if err != nil {
-			log.Print("Failed to write graph result response...")
+			http.Error(writer, "internal server error", http.StatusInternalServerError)
+			log.Print("failed to compute shortest paths: ", err)
+			return
 		}
-
-		if time.Since(start).Seconds() > 2 {
-			cache.Store(search, marshal)
+		marshal, err := json.Marshal(graph)
+		if err != nil {
+			http.Error(writer, "internal server error", http.StatusInternalServerError)
+			log.Print("failed to marshal graph: ", err)
+			return
 		}
+		writer.Header().Set("Content-Type", "application/json")
+		writer.Write(marshal)
 	})
 
 	// Start listening on the default port
-	log.Print("Started listening on port ", LISTENING_PORT, "...")
-	return http.ListenAndServe(":"+strconv.Itoa(LISTENING_PORT), mux)
+	log.Print("started listening on port ", ListeningPort)
+	return http.ListenAndServe(":"+strconv.Itoa(ListeningPort), mux)
 }

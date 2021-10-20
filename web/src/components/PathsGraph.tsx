@@ -13,7 +13,6 @@ import {
 } from "d3";
 import { Graph } from "../helpers/api";
 import Loading from "../static/loading.svg";
-import { pseudoRandomShuffle } from "../helpers/misc";
 
 type Link = SimulationLinkDatum<Node>;
 interface Node extends SimulationNodeDatum {
@@ -25,7 +24,6 @@ interface Node extends SimulationNodeDatum {
 export default function PathsGraph(props: {
   graph: Graph | undefined;
   isLoading: boolean;
-  maxPaths: number;
 }): JSX.Element {
   const ref = useRef<SVGSVGElement>(null);
   const [text, setText] = useState("");
@@ -41,55 +39,35 @@ export default function PathsGraph(props: {
     const { graph } = props;
     if (!graph) return;
 
-    if (graph.pathCount === 0) {
+    // Don't show graph when no paths are found
+    if (graph.count === 0) {
       setText("No path found");
       return;
     }
 
     // Show message based on graph content
-    let message = `Found ${graph.pathCount} ${
-      graph.pathCount === 1 ? "path" : "paths"
-    } of degree ${graph.pathDegree} in ${
-      Math.round(graph.searchDuration / 10) / 100
+    let message = `Found ${graph.count} ${
+      graph.count === 1 ? "path" : "paths"
+    } of degree ${graph.degree} in ${
+      Math.round((new Date().getTime() - graph.requestTime.getTime()) / 10) /
+      100
     } seconds`;
-    if (graph.pathCount > props.maxPaths) {
-      message += `. Only ${props.maxPaths} of them are shown below`;
+    if (graph.count > graph.paths.length) {
+      message += `. Only ${graph.paths.length} of them are shown below`;
     }
     setText(message);
-
-    // Extract paths from the graph. If there are more than maxPaths, limit
-    // the number selected by randomly (but deterministically) selecting only
-    // the first n paths
-    const paths: number[][] = [];
-    const extractPaths = (page: number, path: number[]): boolean => {
-      let outgoing = graph.outgoingLinks[page];
-      if (outgoing && outgoing.length > 0) {
-        outgoing = pseudoRandomShuffle(outgoing);
-        for (let i = 0; i < outgoing.length; i++) {
-          const maxReached = extractPaths(outgoing[i], [...path, outgoing[i]]);
-          if (maxReached) {
-            return true;
-          }
-        }
-      } else {
-        paths.push(path);
-        if (paths.length >= props.maxPaths) return true;
-      }
-      return false;
-    };
-    extractPaths(graph.sourcePage, [graph.sourcePage]);
 
     // Extract nodes and links for D3 from the paths
     const nodes: Node[] = [];
     const links: Link[] = [];
-    paths.forEach((path) => {
+    graph.paths.forEach((path) => {
       let previousNode: Node;
-      path.forEach((id, index) => {
-        let currentNode = nodes.find((node) => node.id === id);
+      path.forEach((page, index) => {
+        let currentNode = nodes.find((node) => node.id === page.id);
         if (!currentNode) {
           currentNode = {
-            id: id,
-            title: graph.pageNames[id],
+            id: page.id,
+            title: page.title,
             degree: index,
           };
           nodes.push(currentNode);
@@ -187,7 +165,8 @@ export default function PathsGraph(props: {
       .attr("target", "_blank")
       .attr(
         "href",
-        (d) => `https://${graph.languageCode}.wikipedia.org/wiki/${d.title}`
+        (node) =>
+          `https://${graph.languageCode}.wikipedia.org/wiki/${node.title}`
       );
 
     // Represent the nodes as colored circles
@@ -195,14 +174,23 @@ export default function PathsGraph(props: {
     clickable
       .append("circle")
       .attr("r", 10)
-      .attr("fill", (d) => colors(d.degree.toString()))
+      .attr("fill", (node) => colors(node.degree.toString()))
       .attr("stroke", "white")
       .attr("stroke-width", 2);
 
     // Add the title corresponding to the node's page
     clickable
       .append("text")
-      .text((d) => d.title)
+      .text((node) => {
+        let text = node.title;
+        if (
+          (node.id === graph.source && graph.sourceRedir) ||
+          (node.id === graph.target && graph.targetRedir)
+        ) {
+          text += " (redirected)";
+        }
+        return text;
+      })
       .attr("style", "user-select: none")
       .attr("x", 16)
       .attr("y", 5);
@@ -210,10 +198,10 @@ export default function PathsGraph(props: {
     // Start physics simulation
     simulation.on("tick", () => {
       link
-        .attr("x1", (d: Link) => (d.source as Node).x?.toString() || "")
-        .attr("y1", (d: Link) => (d.source as Node).y?.toString() || "")
-        .attr("x2", (d: Link) => (d.target as Node).x?.toString() || "")
-        .attr("y2", (d: Link) => (d.target as Node).y?.toString() || "");
+        .attr("x1", (node: Link) => (node.source as Node).x?.toString() || "")
+        .attr("y1", (node: Link) => (node.source as Node).y?.toString() || "")
+        .attr("x2", (node: Link) => (node.target as Node).x?.toString() || "")
+        .attr("y2", (node: Link) => (node.target as Node).y?.toString() || "");
       node.attr("transform", (d) => `translate(${d.x},${d.y})`);
     });
   }, [props]);

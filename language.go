@@ -13,17 +13,18 @@ type Language struct {
 	Database string
 }
 
-type Languages []Language
+// Search a language by a search string by looking for it in
+// a sitematrix from the Wikimedia Commons API.
+func getLanguage(search string) (*Language, error) {
 
-// Fetch the list of all the Wikipedia languages and their corresponding codes and database names
-// by fetching and parsing a sitematrix from the Wikimedia Commons API.
-func GetLanguages() (Languages, error) {
+	// Fetch the sitematrix
 	resp, err := http.Get("https://commons.wikimedia.org/w/api.php?format=json&action=sitematrix")
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
+	// Partially decode into JSON
 	sitematrix := struct {
 		RawSites map[string]json.RawMessage `json:"sitematrix"`
 	}{}
@@ -32,11 +33,13 @@ func GetLanguages() (Languages, error) {
 		return nil, err
 	}
 
-	languages := []Language{}
+	// Loop over all websites and find the language
 	for key, rawSite := range sitematrix.RawSites {
 		if key == "specials" || key == "count" {
 			continue
 		}
+
+		// Decode the site
 		site := struct {
 			Code     string `json:"code"`
 			Name     string `json:"name"`
@@ -50,27 +53,20 @@ func GetLanguages() (Languages, error) {
 			return nil, err
 		}
 
+		// Check for Wikipedia subsites and compare if found
 		for _, subsite := range site.Subsites {
 			if strings.Contains(subsite.URL, "wikipedia.org") {
-				languages = append(languages, Language{
+				language := Language{
 					Name:     strings.Title(site.Name),
 					Code:     site.Code,
 					Database: subsite.Dbname,
-				})
+				}
+				if strings.EqualFold(search, language.Name) || strings.EqualFold(search, language.Code) || strings.EqualFold(search, language.Database) {
+					return &language, nil
+				}
 			}
 		}
 	}
 
-	return languages, nil
-}
-
-// Find a language by a search string. The search string is compared with each of the languages
-// available on Wikipedia and the corresponding language is returned.
-func (languages Languages) Search(search string) (Language, error) {
-	for _, language := range languages {
-		if strings.EqualFold(search, language.Name) || strings.EqualFold(search, language.Code) || strings.EqualFold(search, language.Database) {
-			return language, nil
-		}
-	}
-	return Language{}, errors.New("language '" + search + "' not found")
+	return nil, errors.New("language '" + search + "' not found")
 }

@@ -7,7 +7,7 @@ import Swap from "../static/swap.svg";
 
 export default function PageForm(props: {
   isLoading: boolean;
-  fetchGraph: (source: Page, target: Page) => void;
+  fetchGraph: (source: Page, target: Page, languageCode: string) => void;
 }): JSX.Element {
   const [languageCode, setLanguageCode] = useState("");
   const [sourceInput, setSourceInput] = useState("");
@@ -57,7 +57,7 @@ export default function PageForm(props: {
       if (sourcePage && targetPage) {
         setSourceInput(sourcePage.title);
         setTargetInput(targetPage.title);
-        props.fetchGraph(sourcePage, targetPage);
+        props.fetchGraph(sourcePage, targetPage, languageCode);
       }
     }
   }

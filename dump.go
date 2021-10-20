@@ -5,29 +5,26 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
-	"log"
 	"net/http"
-	"os"
 	"regexp"
 	"strings"
 	"time"
 
 	"github.com/cavaliercoder/grab"
-	"github.com/cheggaaa/pb/v3"
 )
 
-type LocalDumpFiles struct {
-	pageFilePath  string
-	redirFilePath string
-	linkFilePath  string
+type DumpFiles struct {
+	pageDumpPath  string
+	redirDumpPath string
+	linkDumpPath  string
 	dateString    string
 }
 
 type DumpMetadata struct {
-	pageFile   FileHash
-	redirFile  FileHash
-	linkFile   FileHash
-	dateString string
+	pageDumpHash  *FileHash
+	redirDumpHash *FileHash
+	linkDumpHash  *FileHash
+	dateString    string
 }
 
 type FileHash struct {
@@ -35,64 +32,63 @@ type FileHash struct {
 	hash []byte
 }
 
-// Download the latest 'page.sql.gz', 'pagelinks.sql.gz' and 'redirect.sql.gz' dump files to a directory
-func fetchDumpFiles(directory string, mirror string, language Language) (*LocalDumpFiles, error) {
-	err := os.MkdirAll(directory, 0755)
+// Download the latest 'page.sql.gz', 'pagelinks.sql.gz' and 'redirect.sql.gz' dump files
+// to a directory. Accepts a channel over which progress from 0 to 1 will be sent.
+func fetchDumpFiles(directory string, mirror string, language *Language, progress chan<- float64) (*DumpFiles, error) {
+	meta, err := getLatestDumpMetadata(language)
 	if err != nil {
 		return nil, err
 	}
 
-	log.Print("Fetching latest dump info...")
-	files, err := getLatestDumpInfo(language)
-	if err != nil {
-		return nil, err
-	}
-
-	log.Print("Testing mirror for dump files...")
+	// Check existence of mirror and files
 	if !httpExists(mirror) {
 		return nil, errors.New("mirror does not exist")
 	}
 	if !httpExists(mirror + "/" + language.Database) {
 		return nil, errors.New("mirror does not support specified language")
 	}
-	if !httpExists(mirror + "/" + language.Database + "/" + files.dateString) {
+	if !httpExists(mirror + "/" + language.Database + "/" + meta.dateString) {
 		return nil, errors.New("mirror does not contain latest dump")
 	}
 
-	log.Print("Downloading and/or hashing dump files...")
-	baseUrl := mirror + "/" + language.Database + "/" + files.dateString
-	pageRequest, err := grab.NewRequest(directory, baseUrl+"/"+files.pageFile.name)
+	// Create grab requests for concurrently downloading the files
+	baseUrl := mirror + "/" + language.Database + "/" + meta.dateString
+	pageRequest, err := grab.NewRequest(directory, baseUrl+"/"+meta.pageDumpHash.name)
 	if err != nil {
 		return nil, err
 	}
-	pageRequest.SetChecksum(sha1.New(), files.pageFile.hash, true)
-	redirRequest, err := grab.NewRequest(directory, baseUrl+"/"+files.redirFile.name)
+	pageRequest.SetChecksum(sha1.New(), meta.pageDumpHash.hash, true)
+	redirRequest, err := grab.NewRequest(directory, baseUrl+"/"+meta.redirDumpHash.name)
 	if err != nil {
 		return nil, err
 	}
-	redirRequest.SetChecksum(sha1.New(), files.redirFile.hash, true)
-	linkRequest, err := grab.NewRequest(directory, baseUrl+"/"+files.linkFile.name)
+	redirRequest.SetChecksum(sha1.New(), meta.redirDumpHash.hash, true)
+	linkRequest, err := grab.NewRequest(directory, baseUrl+"/"+meta.linkDumpHash.name)
 	if err != nil {
 		return nil, err
 	}
-	linkRequest.SetChecksum(sha1.New(), files.linkFile.hash, true)
+	linkRequest.SetChecksum(sha1.New(), meta.linkDumpHash.hash, true)
 
-	bar := pb.Full.Start64(0).Set(pb.Bytes, true)
+	// Start downloading the files
 	client := grab.NewClient()
 	pageResponse := client.Do(pageRequest)
 	redirResponse := client.Do(redirRequest)
 	linkResponse := client.Do(linkRequest)
-	bar.SetTotal(pageResponse.Size + redirResponse.Size + linkResponse.Size)
+
+	// Setup progress reporting
+	totalBytes := pageResponse.Size + redirResponse.Size + linkResponse.Size
 	go func() {
 		for {
-			bar.SetCurrent(pageResponse.BytesComplete() + redirResponse.BytesComplete() + linkResponse.BytesComplete())
-			if pageResponse.IsComplete() && redirResponse.IsComplete() && linkResponse.IsComplete() {
+			currentBytes := pageResponse.BytesComplete() + redirResponse.BytesComplete() + linkResponse.BytesComplete()
+			if currentBytes >= totalBytes {
 				return
 			}
+			progress <- float64(currentBytes) / float64(totalBytes)
 			time.Sleep(time.Millisecond * 200)
 		}
 	}()
 
+	// Check for any request errors
 	if err := pageResponse.Err(); err != nil {
 		return nil, err
 	}
@@ -103,17 +99,16 @@ func fetchDumpFiles(directory string, mirror string, language Language) (*LocalD
 		return nil, err
 	}
 
-	bar.Finish()
-	return &LocalDumpFiles{
-		pageFilePath:  pageResponse.Filename,
-		redirFilePath: redirResponse.Filename,
-		linkFilePath:  linkResponse.Filename,
-		dateString:    files.dateString,
+	return &DumpFiles{
+		pageDumpPath:  pageResponse.Filename,
+		redirDumpPath: redirResponse.Filename,
+		linkDumpPath:  linkResponse.Filename,
+		dateString:    meta.dateString,
 	}, nil
 }
 
 // Fetch the latest dump file names and hashes from the official dump
-func getLatestDumpInfo(language Language) (*DumpMetadata, error) {
+func getLatestDumpMetadata(language *Language) (*DumpMetadata, error) {
 	resp, err := http.Get("https://dumps.wikimedia.org/" + language.Database + "/latest/" + language.Database + "-latest-sha1sums.txt")
 	if err != nil {
 		return nil, err
@@ -141,55 +136,35 @@ func getLatestDumpInfo(language Language) (*DumpMetadata, error) {
 	}
 
 	return &DumpMetadata{
-		pageFile:   pageFileHash,
-		redirFile:  redirFileHash,
-		linkFile:   linkFileHash,
-		dateString: regexp.MustCompile("[0-9]{8}").FindString(pageFileHash.name),
+		pageDumpHash:  pageFileHash,
+		redirDumpHash: redirFileHash,
+		linkDumpHash:  linkFileHash,
+		dateString:    regexp.MustCompile("[0-9]{8}").FindString(pageFileHash.name),
 	}, nil
 }
 
 // Find a file's hash in a SHA1 checksums file's contents
-func findHash(checksums string, filename string) (FileHash, error) {
+func findHash(checksums string, filename string) (*FileHash, error) {
 	baseRegex := "[0-9a-f]{40}  .+?wiki-[0-9]{8}-"
 
 	fileRegex, err := regexp.Compile(baseRegex + filename)
 	if err != nil {
-		return FileHash{}, err
+		return nil, err
 	}
 
 	info := strings.Split(fileRegex.FindString(checksums), "  ")
 	if len(info) != 2 {
-		return FileHash{}, errors.New(filename + " checksum not found")
+		return nil, errors.New(filename + " checksum not found")
 	}
 
 	fileName := info[1]
 	hexHash := info[0]
 	byteHash, err := hex.DecodeString(hexHash)
 	if err != nil {
-		return FileHash{}, err
+		return nil, err
 	}
 
-	return FileHash{hash: byteHash, name: fileName}, nil
-}
-
-// Get the byte size of a file
-func getFileSize(file *os.File) int64 {
-	info, err := file.Stat()
-	if err != nil {
-		return 0
-	}
-	return info.Size()
-}
-
-// Remove a file if it exists
-func deleteFile(path string) error {
-	err := os.Remove(path)
-	if err != nil {
-		if !os.IsNotExist(err) {
-			return err
-		}
-	}
-	return nil
+	return &FileHash{hash: byteHash, name: fileName}, nil
 }
 
 // Check whether a HTTP resource exists by sending a HEAD request

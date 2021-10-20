@@ -11,9 +11,9 @@ function App() {
   const [isLoading, setLoading] = useState(false);
   const [graph, setGraph] = useState<Graph>();
 
-  async function fetchGraph(source: Page, target: Page) {
+  async function fetchGraph(source: Page, target: Page, languageCode: string) {
     setLoading(true);
-    setGraph(await getShortestPaths(source, target));
+    setGraph(await getShortestPaths(source, target, languageCode, 8));
     setLoading(false);
   }
 
@@ -21,7 +21,7 @@ function App() {
     <>
       <TextHeader text="Wikipath" />
       <PageForm isLoading={isLoading} fetchGraph={fetchGraph} />
-      <PathsGraph isLoading={isLoading} graph={graph} maxPaths={8} />
+      <PathsGraph isLoading={isLoading} graph={graph} />
       <SourceCode url="https://github.com/ldobbelsteen/wikipath" />
     </>
   );

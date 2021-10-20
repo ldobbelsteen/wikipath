@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"compress/gzip"
 	"io"
 	"log"
@@ -9,20 +8,16 @@ import (
 	"regexp"
 	"runtime"
 	"strconv"
-	"strings"
 	"sync"
-
-	"github.com/cheggaaa/pb/v3"
+	"time"
 )
 
-const BUFFER_SIZE = 24576
-
-type PageID = int64
-type PageTitle = string
+const ChannelBufferSize = 24576
+const ReaderBufferSize = 16384
 
 type Page struct {
-	ID    PageID    `json:"id"`
-	Title PageTitle `json:"title"`
+	id    PageID
+	title string
 }
 
 type Redir struct {
@@ -35,109 +30,109 @@ type Link struct {
 	target PageID
 }
 
-var titleCleaner = strings.NewReplacer(`\'`, `'`, `_`, ` `, `\"`, `"`)
-
 // Parse the page dump file using a regular expression. It extracts the page_id and page_title columns from the tuples in the dump,
 // following the table format from https://www.mediawiki.org/wiki/Manual:Page_table. Only pages in the 0 namespace are accepted.
-func pageDumpParse(path string) (<-chan Page, error) {
-	output := make(chan Page, BUFFER_SIZE)
+// Output matches to a returned channel which is closed upon completion. Accepts a channel through with current progress between
+// 0 and 1 is sent.
+func pageDumpParse(path string, progress chan<- float64) (<-chan Page, error) {
+	pages := make(chan Page, ChannelBufferSize)
+	match := func(match []string) { pages <- Page{parsePageID(match[0]), match[1]} }
+	finished := func() { close(pages) }
 	regex := regexp.MustCompile(`\(([0-9]{1,10}),0,'(.{1,255}?)','',[01],[01],[0-9.]+?,'[0-9]+?',(?:'[0-9]+?'|NULL),[0-9]{1,10},[0-9]{1,10},'wikitext',NULL\)`)
-	_, err := dumpParse(path, regex, 2048, func(match []string) {
-		id := parsePageID(match[0])
-		title := titleCleaner.Replace(match[1])
-		output <- Page{id, title}
-	}, func() {
-		close(output)
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return output, nil
+	return pages, dumpParse(path, regex, 2048, match, finished, progress)
 }
 
 // Parse the redirect dump file using a regular expression. It extracts the rd_from and rd_title columns from the tuples in the dump,
 // following the table format from https://www.mediawiki.org/wiki/Manual:Redirect_table. Only redirects in the 0 namespace are accepted.
-// The rd_title is converted to its corresponding ID using a titler map that should be supplied.
-func redirDumpParse(path string, titler map[PageTitle]PageID) (<-chan Redir, error) {
-	output := make(chan Redir, BUFFER_SIZE)
-	regex := regexp.MustCompile(`\(([0-9]{1,10}),0,'(.{1,255}?)','.{0,32}?','.{0,255}?'\)`)
-	_, err := dumpParse(path, regex, 1536, func(match []string) {
+// The rd_title is converted to its corresponding ID using a titler map that should be supplied. Output matches to a returned channel
+// which is closed upon completion. Accepts a channel through with current progress between 0 and 1 is sent.
+func redirDumpParse(path string, titler map[string]PageID, progress chan<- float64) (<-chan Redir, error) {
+	redirs := make(chan Redir, ChannelBufferSize)
+	match := func(match []string) {
 		source := parsePageID(match[0])
-		if target, titleExists := titler[titleCleaner.Replace(match[1])]; titleExists && source != target {
-			output <- Redir{source, target}
+		if target, titleExists := titler[match[1]]; titleExists && source != target {
+			redirs <- Redir{source: source, target: target}
 		}
-	}, func() {
-		close(output)
-	})
-	if err != nil {
-		return nil, err
 	}
-
-	return output, nil
+	finished := func() { close(redirs) }
+	regex := regexp.MustCompile(`\(([0-9]{1,10}),0,'(.{1,255}?)','.{0,32}?','.{0,255}?'\)`)
+	return redirs, dumpParse(path, regex, 1536, match, finished, progress)
 }
 
 // Parse the link dump file using a regular expression. It extracts the pl_from and pl_title columns from the tuples in the dump,
 // following the table format from https://www.mediawiki.org/wiki/Manual:Pagelinks_table. Only links where both the source and target
-// namespaces are 0 are accepted. The pl_title is converted to its corresponding ID using a titler map that should be supplied.
-// Any redirects in the supplied redirect map are followed such that neither the resulting source nor target are a redirect.
-func linkDumpParse(path string, titler map[PageTitle]PageID, redirects map[PageID]PageID) (<-chan Link, func(), error) {
-	output := make(chan Link, BUFFER_SIZE)
-	regex := regexp.MustCompile(`\(([0-9]{1,10}),0,'(.{1,255}?)',0\)`)
-	toggle, err := dumpParse(path, regex, 1024, func(match []string) {
+// namespaces are 0, are accepted. The pl_title is converted to its corresponding ID using a titler map that should be supplied.
+// Any redirects in the supplied redirect map are followed such that neither the resulting source nor target are a redirect. Output
+// matches to a returned channel which is closed upon completion. Accepts a channel through with current progress between 0 and 1 is sent.
+func linkDumpParse(path string, titler map[string]PageID, redirects map[PageID]PageID, progress chan<- float64) (<-chan Link, error) {
+	links := make(chan Link, ChannelBufferSize)
+	match := func(match []string) {
 		source := parsePageID(match[0])
 		if newSource, isRedirect := redirects[source]; isRedirect {
 			source = newSource
 		}
-		if target, titleExists := titler[titleCleaner.Replace(match[1])]; titleExists {
+		if target, titleExists := titler[match[1]]; titleExists {
 			if newTarget, isRedirect := redirects[target]; isRedirect {
 				target = newTarget
 			}
 			if source != target {
-				output <- Link{source, target}
+				links <- Link{source, target}
 			}
 		}
-	}, func() {
-		close(output)
-	})
-	if err != nil {
-		return nil, nil, err
 	}
-
-	return output, toggle, nil
+	finished := func() { close(links) }
+	regex := regexp.MustCompile(`\(([0-9]{1,10}),0,'(.{1,255}?)',0\)`)
+	return links, dumpParse(path, regex, 1024, match, finished, progress)
 }
 
 // Open a dump file and concurently run a regex on its contents which passes all of the matches to a passed function. It reads
 // the file using a buffer, which can cause a regex match to overlap multiple buffers. To solve this, the maximum regex match size
-// needs to be passed such that the last n bytes of a buffer will be copied to the start of the next as not to miss any matches. A
-// function with which the progress bar can be paused and turned back on is returned. The done function is run when the parsing is done
-func dumpParse(path string, regex *regexp.Regexp, maxRegexSize int, output func([]string), done func()) (func(), error) {
+// needs to be passed such that the last n bytes of a buffer will be copied to the start of the next as not to miss any matches.
+// This function should not be used directly, rather use the dump parse functions above.
+func dumpParse(path string, regex *regexp.Regexp, maxRegexSize int, output func([]string), finished func(), progress chan<- float64) error {
 
 	// Open the dump file
 	file, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	// Start a progress bar based on the number of bytes read
-	bar := pb.Full.Start64(getFileSize(file))
-	reader := bar.NewProxyReader(file)
+	// Get size info of the file
+	info, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	size := info.Size()
+
+	// Create proxy reader to keep track of read bytes
+	var readBytes int64
+	proxy := newProxyReader(file, &readBytes)
+
+	// Report back on the number of bytes read as progress
+	go func() {
+		for {
+			if readBytes >= size {
+				return
+			}
+			progress <- float64(readBytes) / float64(size)
+			time.Sleep(time.Millisecond * 200)
+		}
+	}()
 
 	// Decompress the gzipped file
-	gzip, err := gzip.NewReader(reader)
+	gzip, err := gzip.NewReader(proxy)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	buff := bufio.NewReader(gzip)
 
-	// Start multiple goroutines that will all be running regexes on chunks of the contents of the dump file
-	threadCount := runtime.NumCPU()
-	textChunks := make(chan string, threadCount*2)
+	// Start goroutines for running regex on chunks of contents
 	wait := sync.WaitGroup{}
-	for i := 0; i < threadCount; i++ {
+	count := runtime.NumCPU()
+	chunks := make(chan string, 2*count)
+	for i := 0; i < count; i++ {
 		wait.Add(1)
 		go func() {
-			for chunk := range textChunks {
+			for chunk := range chunks {
 				result := regex.FindAllStringSubmatch(chunk, -1)
 				for _, match := range result {
 					output(match[1:])
@@ -147,50 +142,42 @@ func dumpParse(path string, regex *regexp.Regexp, maxRegexSize int, output func(
 		}()
 	}
 
-	// Supply the goroutines with chunks of the file contents in a separate goroutine. This
-	// makes sure any overlap between chunks is taken care of by using the max regex size.
+	// Supply the goroutines with text. This makes sure chunk overlap is taken care of.
 	go func() {
-		defer done()
-		defer bar.Finish()
+		defer finished()
 		defer file.Close()
 		defer gzip.Close()
-		chunkBuffer := make([]byte, buff.Size()*16+maxRegexSize)
-		var lastRead int
+		buffer := make([]byte, ReaderBufferSize+maxRegexSize)
+		var previousReadBytes int
 		for {
-			copy(chunkBuffer, chunkBuffer[lastRead:lastRead+maxRegexSize])
-			read, err := buff.Read(chunkBuffer[maxRegexSize:])
+			copy(buffer, buffer[previousReadBytes:previousReadBytes+maxRegexSize])
+			readBytes, err := gzip.Read(buffer[maxRegexSize:])
 			if err != nil {
-				if err != io.EOF {
-					log.Fatal(err)
+				if err == io.EOF {
+					chunks <- string(buffer[:maxRegexSize+readBytes])
+					close(chunks)
+					break
+				} else {
+					log.Fatal("fatal error while reading dump file: ", err)
 				}
-				close(textChunks)
-				break
 			}
-			textChunks <- string(chunkBuffer[:maxRegexSize+read])
-			lastRead = read
+			chunks <- string(buffer[:maxRegexSize+readBytes])
+			previousReadBytes = readBytes
 		}
 		wait.Wait()
 	}()
 
-	var barPaused bool
-	return func() {
-		if barPaused {
-			bar.Start()
-			barPaused = false
-		} else {
-			bar.Finish()
-			barPaused = true
-		}
-	}, nil
+	return nil
 }
 
 // Convert a string containing a page ID to its integer represenation. In the dumps, page IDs
 // are 10 digit unsigned integers, meaning the max value is 9999999999. This number fits in a
-// 34 bit integer, which is why that is set as the bitsize in the parser. Returns 0 on error.
+// 34 bit integer. However, to save space, the number is parsed into a 32 bit integer. This
+// means any page ID above 4294967296 will not be parsed correctly.
 func parsePageID(str string) PageID {
-	id, err := strconv.ParseInt(str, 10, 34)
+	id, err := strconv.ParseUint(str, 10, 34)
 	if err != nil {
 		return 0
 	}
-	return id
+	return uint32(id)
 }

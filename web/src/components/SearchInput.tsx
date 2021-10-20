@@ -2,6 +2,7 @@ import { Page, getRandomPage, getSuggestions } from "../helpers/api";
 import React, { useRef, useState } from "react";
 import Autosuggest from "react-autosuggest";
 import Dice from "../static/dice.svg";
+import Loading from "../static/loading.svg";
 import { weakStringEquals } from "../helpers/misc";
 
 const theme: Autosuggest.Theme = {
@@ -85,6 +86,19 @@ export default function SearchInput(props: {
       .catch((err) => console.error(err));
   };
 
+  const random = randomDisabled ? (
+    <img className="random" src={Loading} alt="Loading..."></img>
+  ) : (
+    <input
+      className="random"
+      type="image"
+      src={Dice}
+      alt="Get random page"
+      disabled={props.disabled || randomDisabled || !props.languageCode}
+      onClick={randomPage}
+    ></input>
+  );
+
   return (
     <div className="autosuggest">
       <Autosuggest
@@ -104,14 +118,7 @@ export default function SearchInput(props: {
           onChange: (_, { newValue }) => props.setInput(newValue),
         }}
       />
-      <input
-        className="random"
-        type="image"
-        src={Dice}
-        alt="Get random page"
-        disabled={props.disabled || randomDisabled || !props.languageCode}
-        onClick={randomPage}
-      ></input>
+      {random}
     </div>
   );
 }
