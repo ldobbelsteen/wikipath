@@ -70,7 +70,7 @@ export default function PageForm(props: {
   return (
     <div className="form">
       <p>Find the shortest path between any two Wikipedia pages</p>
-      <div>
+      <div id="form-div">
         <LanguageSelect disabled={props.isLoading} selected={setLanguageCode} />
         <SearchInput
           id={"source"}
