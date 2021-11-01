@@ -12,10 +12,11 @@ type Database struct {
 	redirectQuery *sql.Stmt
 	incomingQuery *sql.Stmt
 	outgoingQuery *sql.Stmt
+	BuildDate     string `json:"buildDate"`
 	DumpDate      string `json:"dumpDate"`
 	LangCode      string `json:"languageCode"`
 	LangName      string `json:"languageName"`
-	maxPageID     PageID
+	MaxPageID     PageID `json:"maxPageID"`
 }
 
 type Graph struct {
@@ -39,6 +40,10 @@ func openDatabase(path string) (*Database, error) {
 		row := database.QueryRow("SELECT value FROM metadata WHERE key = ?", key)
 		err = row.Scan(&value)
 		return
+	}
+	buildDate, err := getMetadata("buildDate")
+	if err != nil {
+		return nil, err
 	}
 	dumpDate, err := getMetadata("dumpDate")
 	if err != nil {
@@ -83,10 +88,11 @@ func openDatabase(path string) (*Database, error) {
 		redirectQuery: redirectQuery,
 		incomingQuery: incomingQuery,
 		outgoingQuery: outgoingQuery,
+		BuildDate:     buildDate,
 		DumpDate:      dumpDate,
 		LangCode:      langCode,
 		LangName:      langName,
-		maxPageID:     maxPageID,
+		MaxPageID:     maxPageID,
 	}, nil
 }
 

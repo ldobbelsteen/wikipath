@@ -135,6 +135,11 @@ func buildDatabase(databaseDir string, dumpsDir string, dumpMirror string, rawLa
 		os.Remove(path)
 		return err
 	}
+	_, err = insertMetadata.Exec("buildDate", time.Now().Format("20060102"))
+	if err != nil {
+		os.Remove(path)
+		return err
+	}
 	_, err = insertMetadata.Exec("langCode", language.Code)
 	if err != nil {
 		os.Remove(path)

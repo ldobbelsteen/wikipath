@@ -16,17 +16,21 @@ function isNonZeroPositiveInt(int: any): int is number {
 }
 
 export type Database = {
+  buildDate: string;
   dumpDate: string;
-  languageName: string;
   languageCode: string;
+  languageName: string;
+  maxPageID: number;
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function isDatabase(database: any): database is Database {
   return (
+    isNonEmptyString(database.buildDate) &&
     isNonEmptyString(database.dumpDate) &&
+    isNonEmptyString(database.languageCode) &&
     isNonEmptyString(database.languageName) &&
-    isNonEmptyString(database.languageCode)
+    isNonZeroPositiveInt(database.maxPageID)
   );
 }
 

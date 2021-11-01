@@ -93,11 +93,11 @@ func serve(databaseDir string, webDir string) error {
 		}
 
 		// Check if IDs are too large anyways
-		if source > database.maxPageID {
+		if source > database.MaxPageID {
 			http.Error(writer, "source ID is too large", http.StatusBadRequest)
 			return
 		}
-		if target > database.maxPageID {
+		if target > database.MaxPageID {
 			http.Error(writer, "target ID is too large", http.StatusBadRequest)
 			return
 		}
