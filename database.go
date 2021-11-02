@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"sort"
@@ -9,14 +10,23 @@ import (
 type PageID = uint32
 
 type Database struct {
-	redirectQuery *sql.Stmt
-	incomingQuery *sql.Stmt
-	outgoingQuery *sql.Stmt
-	BuildDate     string `json:"buildDate"`
-	DumpDate      string `json:"dumpDate"`
-	LangCode      string `json:"languageCode"`
-	LangName      string `json:"languageName"`
-	MaxPageID     PageID `json:"maxPageID"`
+	self             *sql.DB
+	redirectTemplate *sql.Stmt
+	incomingTemplate *sql.Stmt
+	outgoingTemplate *sql.Stmt
+	BuildDate        string `json:"buildDate"`
+	DumpDate         string `json:"dumpDate"`
+	LangCode         string `json:"languageCode"`
+	LangName         string `json:"languageName"`
+	MaxPageID        PageID `json:"maxPageID"`
+}
+
+type Transaction struct {
+	self     *sql.Tx
+	redirect *sql.Stmt
+	incoming *sql.Stmt
+	outgoing *sql.Stmt
+	context  context.Context
 }
 
 type Graph struct {
@@ -66,42 +76,55 @@ func openDatabase(path string) (*Database, error) {
 		return nil, errors.New("invalid maxPageID in metadata")
 	}
 
-	// Prepare queries for performance
-	tx, err := database.Begin()
+	// Prepare statement templates for later transactions
+	redirectTemplate, err := database.Prepare("SELECT redirect FROM redirects WHERE id = ?")
 	if err != nil {
 		return nil, err
 	}
-	redirectQuery, err := tx.Prepare("SELECT redirect FROM redirects WHERE id = ?")
+	incomingTemplate, err := database.Prepare("SELECT incoming FROM incoming WHERE id = ?")
 	if err != nil {
 		return nil, err
 	}
-	incomingQuery, err := tx.Prepare("SELECT incoming FROM incoming WHERE id = ?")
-	if err != nil {
-		return nil, err
-	}
-	outgoingQuery, err := tx.Prepare("SELECT outgoing FROM outgoing WHERE id = ?")
+	outgoingTemplate, err := database.Prepare("SELECT outgoing FROM outgoing WHERE id = ?")
 	if err != nil {
 		return nil, err
 	}
 
 	return &Database{
-		redirectQuery: redirectQuery,
-		incomingQuery: incomingQuery,
-		outgoingQuery: outgoingQuery,
-		BuildDate:     buildDate,
-		DumpDate:      dumpDate,
-		LangCode:      langCode,
-		LangName:      langName,
-		MaxPageID:     maxPageID,
+		self:             database,
+		redirectTemplate: redirectTemplate,
+		incomingTemplate: incomingTemplate,
+		outgoingTemplate: outgoingTemplate,
+		BuildDate:        buildDate,
+		DumpDate:         dumpDate,
+		LangCode:         langCode,
+		LangName:         langName,
+		MaxPageID:        maxPageID,
 	}, nil
 }
 
-// Get the page to which a page redirects. Returns 0 if no redirect was found.
-func (db *Database) getRedirect(page PageID) (PageID, error) {
-	var result PageID
-	err := db.redirectQuery.QueryRow(page).Scan(&result)
+// Run a function that takes a single transaction in a certain context
+func (db *Database) runTransaction(ctx context.Context, fn func(tx Transaction)) error {
+	tx, err := db.self.Begin()
 	if err != nil {
-		if err == sql.ErrNoRows {
+		return err
+	}
+	fn(Transaction{
+		self:     tx,
+		redirect: tx.Stmt(db.redirectTemplate),
+		incoming: tx.Stmt(db.incomingTemplate),
+		outgoing: tx.Stmt(db.outgoingTemplate),
+		context:  ctx,
+	})
+	return tx.Commit()
+}
+
+// Get the page to which a page redirects. Returns 0 if no redirect was found.
+func (tx Transaction) getRedirect(page PageID) (PageID, error) {
+	var result PageID
+	err := tx.redirect.QueryRowContext(tx.context, page).Scan(&result)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
 			return 0, nil
 		}
 		return 0, err
@@ -109,49 +132,60 @@ func (db *Database) getRedirect(page PageID) (PageID, error) {
 	return result, nil
 }
 
-// Get the incoming or outgoing links of a page. Returns empty slice if no links were found.
-func (db *Database) getLinks(page PageID, outgoing bool) ([]PageID, error) {
-	var result []byte
-	var err error
-
-	// Query the database based on direction
-	if outgoing {
-		err = db.outgoingQuery.QueryRow(page).Scan(&result)
-	} else {
-		err = db.incomingQuery.QueryRow(page).Scan(&result)
-	}
-	if err != nil {
-		if err == sql.ErrNoRows {
+// Get the incoming links of a page. Returns empty slice if no links were found.
+func (tx Transaction) getIncoming(page PageID) ([]PageID, error) {
+	var data []byte
+	if err := tx.incoming.QueryRowContext(tx.context, page).Scan(&data); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
 			return []PageID{}, nil
+		} else {
+			return nil, err
 		}
-		return nil, err
 	}
-
-	// Convert the blob back to a slice of pages
-	return bytesToPages(result)
+	return bytesToPages(data)
 }
 
-// Find the paths of the shortest possible degree between two pages
-func (db *Database) shortestPaths(source PageID, target PageID, languageCode string) (*Graph, error) {
-	graph := &Graph{}
+// Get the outgoing links of a page. Returns empty slice if no links were found.
+func (tx Transaction) getOutgoing(page PageID) ([]PageID, error) {
+	var data []byte
+	if err := tx.outgoing.QueryRowContext(tx.context, page).Scan(&data); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return []PageID{}, nil
+		} else {
+			return nil, err
+		}
+	}
+	return bytesToPages(data)
+}
+
+// Find the paths of the shortest possible degree between a source and target page
+func (tx Transaction) getShortestPaths(source PageID, target PageID) (*Graph, error) {
+	graph := &Graph{
+		Links:       map[PageID][]PageID{},
+		Count:       0,
+		Degree:      0,
+		Source:      source,
+		Target:      target,
+		SourceRedir: false,
+		TargetRedir: false,
+	}
 
 	// Follow any redirects for the source and target
-	if sourceRedir, err := db.getRedirect(source); err != nil {
+	if sourceRedir, err := tx.getRedirect(source); err != nil {
 		return nil, err
 	} else if sourceRedir != 0 {
 		source = sourceRedir
 		graph.SourceRedir = true
+		graph.Source = source
 	}
-	graph.Source = source
-	if targetRedir, err := db.getRedirect(target); err != nil {
+	if targetRedir, err := tx.getRedirect(target); err != nil {
 		return nil, err
 	} else if targetRedir != 0 {
 		target = targetRedir
 		graph.TargetRedir = true
+		graph.Target = target
 	}
-	graph.Target = target
 
-	// Variables necessary for the search from both sides
 	forwardParents := map[PageID][]PageID{source: {}}
 	backwardParents := map[PageID][]PageID{target: {}}
 	forwardQueue := []PageID{source}
@@ -176,7 +210,7 @@ func (db *Database) shortestPaths(source PageID, target PageID, languageCode str
 			for i := 0; i < forwardLength; i++ {
 				page := forwardQueue[0]
 				forwardQueue = forwardQueue[1:]
-				outgoing, err := db.getLinks(page, true)
+				outgoing, err := tx.getOutgoing(page)
 				if err != nil {
 					return nil, err
 				}
@@ -204,7 +238,7 @@ func (db *Database) shortestPaths(source PageID, target PageID, languageCode str
 			for i := 0; i < backwardLength; i++ {
 				page := backwardQueue[0]
 				backwardQueue = backwardQueue[1:]
-				incoming, err := db.getLinks(page, false)
+				incoming, err := tx.getIncoming(page)
 				if err != nil {
 					return nil, err
 				}
@@ -233,7 +267,6 @@ func (db *Database) shortestPaths(source PageID, target PageID, languageCode str
 
 	// Backtrack from all overlapping pages. Stores the total number of paths
 	// and all links in the final paths into the graph.
-	graph.Links = map[PageID][]PageID{}
 	forwardPathCounts := map[PageID]int{}
 	backwardPathCounts := map[PageID]int{}
 	for overlap := range overlapping {
@@ -241,9 +274,7 @@ func (db *Database) shortestPaths(source PageID, target PageID, languageCode str
 		backwardPathCount := extractPathCount(overlap, backwardPathCounts, false, forwardParents, graph.Links)
 		graph.Count += forwardPathCount * backwardPathCount
 	}
-	if graph.Count == 0 {
-		graph.Degree = 0
-	} else {
+	if graph.Count != 0 {
 		graph.Degree = forwardDepth + backwardDepth
 	}
 

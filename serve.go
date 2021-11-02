@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -102,21 +104,31 @@ func serve(databaseDir string, webDir string) error {
 			return
 		}
 
-		// Find the shortest path and write the result
-		graph, err := database.shortestPaths(source, target, languageCode)
+		// Get the shortest paths graph and write it as a response
+		err := database.runTransaction(request.Context(), func(tx Transaction) {
+			graph, err := tx.getShortestPaths(source, target)
+			if err != nil {
+				if errors.Is(err, context.Canceled) {
+					http.Error(writer, "request timeout", http.StatusRequestTimeout)
+					return
+				} else {
+					http.Error(writer, "internal server error", http.StatusInternalServerError)
+					log.Print("failed to compute shortest paths graph: ", err)
+					return
+				}
+			}
+			marshal, err := json.Marshal(graph)
+			if err != nil {
+				http.Error(writer, "internal server error", http.StatusInternalServerError)
+				log.Print("failed to marshal graph: ", err)
+				return
+			}
+			writer.Header().Set("Content-Type", "application/json")
+			writer.Write(marshal)
+		})
 		if err != nil {
-			http.Error(writer, "internal server error", http.StatusInternalServerError)
-			log.Print("failed to compute shortest paths: ", err)
-			return
+			log.Print("error during database transaction: ", err)
 		}
-		marshal, err := json.Marshal(graph)
-		if err != nil {
-			http.Error(writer, "internal server error", http.StatusInternalServerError)
-			log.Print("failed to marshal graph: ", err)
-			return
-		}
-		writer.Header().Set("Content-Type", "application/json")
-		writer.Write(marshal)
 	})
 
 	// Start listening on the default port

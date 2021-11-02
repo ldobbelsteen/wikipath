@@ -2,6 +2,7 @@ package main
 
 import (
 	"compress/gzip"
+	"errors"
 	"io"
 	"log"
 	"os"
@@ -153,7 +154,7 @@ func dumpParse(path string, regex *regexp.Regexp, maxRegexSize int, output func(
 			copy(buffer, buffer[previousReadBytes:previousReadBytes+maxRegexSize])
 			readBytes, err := gzip.Read(buffer[maxRegexSize:])
 			if err != nil {
-				if err == io.EOF {
+				if errors.Is(err, io.EOF) {
 					chunks <- string(buffer[:maxRegexSize+readBytes])
 					close(chunks)
 					break
