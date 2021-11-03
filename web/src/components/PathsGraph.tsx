@@ -22,7 +22,7 @@ interface Node extends SimulationNodeDatum {
 }
 
 export default function PathsGraph(props: {
-  graph: Graph | undefined;
+  graph: Graph | string | undefined;
   isLoading: boolean;
 }): JSX.Element {
   const ref = useRef<SVGSVGElement>(null);
@@ -38,6 +38,10 @@ export default function PathsGraph(props: {
 
     const { graph } = props;
     if (!graph) return;
+    if (typeof graph === "string") {
+      setText(graph);
+      return;
+    }
 
     // Don't show graph when no paths are found
     if (graph.count === 0) {

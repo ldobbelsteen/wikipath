@@ -2,7 +2,7 @@
     "compilerOptions": {
         "esModuleInterop": true,
         "jsx": "preserve",
-        "lib": ["DOM", "es2017"],
+        "lib": ["DOM", "es2018"],
         "strict": true,
     },
     "include": ["src", "src/custom.d.ts"]

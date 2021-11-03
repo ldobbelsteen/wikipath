@@ -137,6 +137,11 @@ function isGraph(graph: any): graph is Graph {
 export async function getAvailableDatabases(): Promise<Database[]> {
   const url = developmentPrefix + "/databases";
   const res = await fetch(url);
+  if (!res.ok) {
+    return Promise.reject(
+      "Error while fetching available databases: " + (await res.text())
+    );
+  }
   const data = await res.json();
   if (!Array.isArray(data)) {
     return Promise.reject("Databases response is malformed");
@@ -151,6 +156,11 @@ export async function getAvailableDatabases(): Promise<Database[]> {
 export async function getRandomPage(languageCode: string): Promise<Page> {
   const url = `https://${languageCode}.wikipedia.org/w/api.php?origin=*&action=query&format=json&list=random&rnnamespace=0&rnlimit=1`;
   const res = await fetch(url, { headers: wikipediaHeaders });
+  if (!res.ok) {
+    return Promise.reject(
+      "Error while fetching random page: " + (await res.text())
+    );
+  }
   const raw = await res.json();
   const result = raw?.query?.random;
   if (!Array.isArray(result) || result.length !== 1) {
@@ -179,6 +189,11 @@ export async function getShortestPaths(
     developmentPrefix +
     `/paths?language=${languageCode}&source=${source.id}&target=${target.id}`;
   const res = await fetch(url);
+  if (!res.ok) {
+    return Promise.reject(
+      "Error while fetching shortest paths graph: " + (await res.text())
+    );
+  }
   const rawGraph = await res.json();
   if (!isRawGraph(rawGraph)) {
     return Promise.reject("Unexpected shortest paths format");
@@ -187,7 +202,13 @@ export async function getShortestPaths(
   // Extract paths from the raw API graph and fetch titles
   const paths = extractPaths(rawGraph, maxPaths);
   const ids = flattenUnique(paths);
-  const titles = await getPageTitles(ids, languageCode);
+  let titles = [];
+  try {
+    titles = await getPageTitles(ids, languageCode);
+  } catch (err) {
+    return Promise.reject(err);
+  }
+
   const titleMapper: Record<number, string> = {};
   for (let i = 0; i < ids.length; i++) {
     titleMapper[ids[i]] = titles[i];
@@ -229,6 +250,11 @@ export async function getPageTitles(
   const delimitedPages = pages.join("|");
   const url = `https://${languageCode}.wikipedia.org/w/api.php?origin=*&action=query&format=json&pageids=${delimitedPages}`;
   const res = await fetch(url, { headers: wikipediaHeaders });
+  if (!res.ok) {
+    return Promise.reject(
+      "Error while fetching page titles: " + (await res.text())
+    );
+  }
   const data = await res.json();
   const titles = pages.map((id) => data?.query?.pages[id]?.title);
   if (!titles.every(isNonEmptyString)) {
@@ -246,6 +272,11 @@ export async function getSuggestions(
 ): Promise<Page[]> {
   const url = `https://${languageCode}.wikipedia.org/w/api.php?origin=*&action=query&list=prefixsearch&pslimit=${limit}&pssearch=${search}&format=json`;
   const res = await fetch(url, { headers: wikipediaHeaders, signal: abort });
+  if (!res.ok) {
+    return Promise.reject(
+      "Error while fetching search suggestions: " + (await res.text())
+    );
+  }
   const data = await res.json();
   const results = data?.query?.prefixsearch;
   if (!results || !Array.isArray(results)) {

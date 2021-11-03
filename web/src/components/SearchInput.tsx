@@ -63,11 +63,18 @@ export default function SearchInput(props: {
       .then((res) => {
         setSuggestions(res);
         props.setPage(res.find((page) => weakStringEquals(page.title, search)));
-        props.setReady(true);
         return;
       })
+      .finally(() => {
+        props.setReady(true);
+      })
       .catch((err) => {
-        if (err.name !== "AbortError") console.error(err);
+        if (err.name !== "AbortError") {
+          setSuggestions([]);
+          props.setInput("Error");
+          props.setPage(undefined);
+          console.error(err);
+        }
       });
   };
 
@@ -79,11 +86,17 @@ export default function SearchInput(props: {
       .then((page) => {
         props.setInput(page.title);
         props.setPage(page);
-        props.setReady(true);
-        setRandomDisabled(false);
         return;
       })
-      .catch((err) => console.error(err));
+      .finally(() => {
+        props.setReady(true);
+        setRandomDisabled(false);
+      })
+      .catch((err) => {
+        props.setInput("Error");
+        props.setPage(undefined);
+        console.error(err);
+      });
   };
 
   const random = randomDisabled ? (

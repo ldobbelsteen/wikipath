@@ -9,12 +9,18 @@ import TextHeader from "./components/TextHeader";
 
 function App() {
   const [isLoading, setLoading] = useState(false);
-  const [graph, setGraph] = useState<Graph>();
+  const [graph, setGraph] = useState<Graph | string>();
 
   async function fetchGraph(source: Page, target: Page, languageCode: string) {
     setLoading(true);
-    setGraph(await getShortestPaths(source, target, languageCode, 8));
-    setLoading(false);
+    try {
+      setGraph(await getShortestPaths(source, target, languageCode, 8));
+    } catch (err) {
+      setGraph("Error");
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
