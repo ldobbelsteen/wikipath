@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cavaliercoder/grab"
+	"github.com/cavaliergopher/grab/v3"
 )
 
 type DumpFiles struct {
@@ -76,7 +76,7 @@ func fetchDumpFiles(directory string, mirror string, language *Language, progres
 	linkResponse := client.Do(linkRequest)
 
 	// Setup progress reporting
-	totalBytes := pageResponse.Size + redirResponse.Size + linkResponse.Size
+	totalBytes := pageResponse.Size() + redirResponse.Size() + linkResponse.Size()
 	go func() {
 		for {
 			currentBytes := pageResponse.BytesComplete() + redirResponse.BytesComplete() + linkResponse.BytesComplete()
