@@ -40,6 +40,12 @@ func buildDatabase(databaseDir string, dumpsDir string, dumpMirror string, rawLa
 		return err
 	}
 
+	// Create the directory for storing the databases if it doesn't exist
+	err = os.MkdirAll(databaseDir, 0755)
+	if err != nil {
+		return err
+	}
+
 	// Determine temporary path and remove any previous leftovers
 	path := filepath.Join(databaseDir, language.Database+"-"+dumpFiles.dateString+DatabaseFileExtension+TemporaryFileExtension)
 	err = os.Remove(path)
