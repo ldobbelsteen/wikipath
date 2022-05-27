@@ -1,32 +1,86 @@
 {
-	"scripts": {
-		"build": "vite build",
-		"dev": "vite",
-		"lint": "eslint . --ignore-path ../.gitignore --ext .ts,.tsx --max-warnings 0 && tsc --noEmit"
-	},
-	"dependencies": {
-		"@types/d3": "^7.1.0",
-		"@types/react": "^17.0.43",
-		"@types/react-autosuggest": "^10.1.5",
-		"@types/react-dom": "^17.0.11",
-		"@typescript-eslint/eslint-plugin": "^5.16.0",
-		"@typescript-eslint/parser": "^5.13.0",
-		"d3": "^7.3.0",
-		"eslint": "^8.12.0",
-		"eslint-config-prettier": "^8.3.0",
-		"eslint-import-resolver-typescript": "^2.5.0",
-		"eslint-plugin-import": "^2.25.4",
-		"eslint-plugin-jsx-a11y": "^6.5.1",
-		"eslint-plugin-prettier": "^4.0.0",
-		"eslint-plugin-promise": "^6.0.0",
-		"eslint-plugin-react": "^7.28.0",
-		"eslint-plugin-react-hooks": "^4.3.0",
-		"prettier": "^2.5.1",
-		"react": "^17.0.2",
-		"react-autosuggest": "^10.1.0",
-		"react-dom": "^17.0.2",
-		"sass": "^1.49.9",
-		"typescript": "^4.6.2",
-		"vite": "^2.7.12"
-	}
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "lint": "tsc --noEmit && eslint . --ignore-path .gitignore --max-warnings 0"
+  },
+  "dependencies": {
+    "@types/d3": "^7.4.0",
+    "@types/react": "^18.0.9",
+    "@types/react-autosuggest": "^10.1.5",
+    "@types/react-dom": "^18.0.5",
+    "@typescript-eslint/eslint-plugin": "^5.26.0",
+    "@typescript-eslint/parser": "^5.26.0",
+    "d3": "^7.4.4",
+    "eslint": "^8.16.0",
+    "eslint-config-prettier": "^8.5.0",
+    "eslint-plugin-import": "^2.26.0",
+    "eslint-plugin-jsx-a11y": "^6.5.1",
+    "eslint-plugin-prettier": "^4.0.0",
+    "eslint-plugin-promise": "^6.0.0",
+    "eslint-plugin-react": "^7.30.0",
+    "eslint-plugin-react-hooks": "^4.5.0",
+    "prettier": "^2.6.2",
+    "prettier-plugin-jsdoc": "^0.3.38",
+    "react": "^18.1.0",
+    "react-autosuggest": "^10.1.0",
+    "react-dom": "^18.1.0",
+    "sass": "^1.52.1",
+    "typescript": "^4.7.2",
+    "vite": "^2.9.9",
+    "zod": "^3.17.3"
+  },
+  "eslintConfig": {
+    "env": {
+      "browser": true
+    },
+    "extends": [
+      "eslint:recommended",
+      "plugin:import/recommended",
+      "plugin:import/typescript",
+      "plugin:@typescript-eslint/recommended",
+      "plugin:@typescript-eslint/recommended-requiring-type-checking",
+      "plugin:react/recommended",
+      "plugin:react-hooks/recommended",
+      "plugin:jsx-a11y/recommended",
+      "plugin:promise/recommended",
+      "plugin:prettier/recommended"
+    ],
+    "parser": "@typescript-eslint/parser",
+    "parserOptions": {
+      "ecmaFeatures": {
+        "jsx": true
+      },
+      "project": [
+        "./tsconfig.json"
+      ],
+      "sourceType": "module"
+    },
+    "rules": {
+      "import/order": [
+        "warn",
+        {
+          "alphabetize": {
+            "order": "asc"
+          }
+        }
+      ],
+      "line-comment-position": [
+        "warn",
+        {
+          "position": "beside"
+        }
+      ]
+    },
+    "settings": {
+      "react": {
+        "version": "detect"
+      }
+    }
+  },
+  "prettier": {
+    "plugins": [
+      "prettier-plugin-jsdoc"
+    ]
+  }
 }

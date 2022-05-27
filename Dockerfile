@@ -2,7 +2,7 @@ FROM node:alpine AS web-builder
 WORKDIR /build
 COPY . .
 WORKDIR /build/web
-RUN npm install
+RUN npm ci
 RUN npm run lint
 RUN npm run build
 

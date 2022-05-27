@@ -120,8 +120,8 @@ func buildDatabase(databaseDir string, dumpsDir string, dumpMirror string, rawLa
 
 	// Parse the page dump file. Creates a map mapping from a page's title to
 	// the corresponding page ID. Also determines the largest page ID.
-	var maxPageID PageID
-	titler := map[string]PageID{}
+	var largestPageId PageId
+	titler := map[string]PageId{}
 	messages <- "Parsing page dump file"
 	pageChan, err := pageDumpParse(dumpFiles.pageDumpPath, progresses)
 	if err != nil {
@@ -130,8 +130,8 @@ func buildDatabase(databaseDir string, dumpsDir string, dumpMirror string, rawLa
 	}
 	for page := range pageChan {
 		titler[page.title] = page.id
-		if page.id > maxPageID {
-			maxPageID = page.id
+		if page.id > largestPageId {
+			largestPageId = page.id
 		}
 	}
 
@@ -156,7 +156,7 @@ func buildDatabase(databaseDir string, dumpsDir string, dumpMirror string, rawLa
 		os.Remove(path)
 		return err
 	}
-	_, err = insertMetadata.Exec("maxPageID", strconv.FormatUint(uint64(maxPageID), 10))
+	_, err = insertMetadata.Exec("largestPageId", strconv.FormatUint(uint64(largestPageId), 10))
 	if err != nil {
 		os.Remove(path)
 		return err
@@ -164,7 +164,7 @@ func buildDatabase(databaseDir string, dumpsDir string, dumpMirror string, rawLa
 
 	// Parse the redirect dump file. Creates a map that maps a page ID to the page ID it redirects to.
 	messages <- "Parsing redirects dump file"
-	redirects := map[PageID]PageID{}
+	redirects := map[PageId]PageId{}
 	redirChan, err := redirDumpParse(dumpFiles.redirDumpPath, titler, progresses)
 	if err != nil {
 		os.Remove(path)
@@ -193,7 +193,7 @@ func buildDatabase(databaseDir string, dumpsDir string, dumpMirror string, rawLa
 	for source, target := range redirects {
 		currentRedirects += 1
 		if _, targetIsRedir := redirects[target]; targetIsRedir {
-			encountered := []PageID{target} // Keep track of followed redirects
+			encountered := []PageId{target} // Keep track of followed redirects
 			for {
 				tempTarget, isRedirect := redirects[encountered[len(encountered)-1]]
 				if !isRedirect {
@@ -218,8 +218,8 @@ func buildDatabase(databaseDir string, dumpsDir string, dumpMirror string, rawLa
 
 	// Parse the pagelink dump file and store the incoming and outgoing links for all page IDs in large maps
 	messages <- "Parsing pagelink dump file"
-	incoming := make(map[PageID][]PageID)
-	outgoing := make(map[PageID][]PageID)
+	incoming := make(map[PageId][]PageId)
+	outgoing := make(map[PageId][]PageId)
 	linkChan, err := linkDumpParse(dumpFiles.linkDumpPath, titler, redirects, progresses)
 	if err != nil {
 		os.Remove(path)
@@ -306,10 +306,10 @@ func buildDatabase(databaseDir string, dumpsDir string, dumpMirror string, rawLa
 // Convert a slice of page IDs to a concatenated slice
 // of their corresponding byte representations. Ignores
 // any duplicates in the slice.
-func pagesToBytes(ps []PageID) []byte {
+func pagesToBytes(ps []PageId) []byte {
 	length := len(ps)
 	duplicateCount := 0
-	set := make(map[PageID]struct{})
+	set := make(map[PageId]struct{})
 	buffer := make([]byte, length*4)
 	for i := 0; i < length; i++ {
 		page := ps[i]
@@ -325,7 +325,7 @@ func pagesToBytes(ps []PageID) []byte {
 }
 
 // Convert a byte representation to its page ID.
-func bytesToPage(b []byte) (PageID, error) {
+func bytesToPage(b []byte) (PageId, error) {
 	if len(b) != 4 {
 		return 0, errors.New("invalid page bytes length")
 	}
@@ -333,12 +333,12 @@ func bytesToPage(b []byte) (PageID, error) {
 }
 
 // Convert a concatenated slice of byte representations of page IDs back to a slice of page IDs
-func bytesToPages(bs []byte) ([]PageID, error) {
+func bytesToPages(bs []byte) ([]PageId, error) {
 	if len(bs)%4 != 0 {
 		return nil, errors.New("invalid pages bytes length")
 	}
 	length := len(bs) / 4
-	result := make([]PageID, length)
+	result := make([]PageId, length)
 	for i := 0; i < length; i++ {
 		page, err := bytesToPage(bs[i*4 : (i+1)*4])
 		if err != nil {

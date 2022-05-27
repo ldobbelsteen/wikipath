@@ -1,6 +1,6 @@
-import React, { useEffect, useRef, useState } from "react";
-import { SimulationLinkDatum, SimulationNodeDatum } from "d3-force";
 import {
+  D3DragEvent,
+  D3ZoomEvent,
   drag,
   forceCenter,
   forceLink,
@@ -11,7 +11,9 @@ import {
   select,
   zoom,
 } from "d3";
-import { Graph } from "../helpers/api";
+import { SimulationLinkDatum, SimulationNodeDatum } from "d3-force";
+import React, { useEffect, useRef, useState } from "react";
+import { Graph } from "../api";
 import Loading from "../static/loading.svg";
 
 type Link = SimulationLinkDatum<Node>;
@@ -21,14 +23,14 @@ interface Node extends SimulationNodeDatum {
   degree: number;
 }
 
-export default function PathsGraph(props: {
+export const ResultGraph = (props: {
   graph: Graph | string | undefined;
   isLoading: boolean;
-}): JSX.Element {
+}) => {
   const ref = useRef<SVGSVGElement>(null);
   const [text, setText] = useState("");
 
-  // Re-render on data change
+  /** Re-render on data change */
   useEffect(() => {
     if (props.isLoading) return;
     if (ref.current === null) return;
@@ -43,25 +45,22 @@ export default function PathsGraph(props: {
       return;
     }
 
-    // Don't show graph when no paths are found
-    if (graph.count === 0) {
+    /** Don't show graph when no paths are found */
+    if (graph.pathCount === 0) {
       setText("No path found");
       return;
     }
 
-    // Show message based on graph content
-    let message = `Found ${graph.count} ${
-      graph.count === 1 ? "path" : "paths"
-    } of degree ${graph.degree} in ${
-      Math.round((new Date().getTime() - graph.requestTime.getTime()) / 10) /
-      100
-    } seconds`;
-    if (graph.count > graph.paths.length) {
+    /** Show message based on graph content */
+    let message = `Found ${graph.pathCount} ${
+      graph.pathCount === 1 ? "path" : "paths"
+    } of degree ${graph.pathDegrees}`;
+    if (graph.pathCount > graph.paths.length) {
       message += `. Only ${graph.paths.length} of them are shown below`;
     }
     setText(message);
 
-    // Extract nodes and links for D3 from the paths
+    /** Extract nodes and links for D3 from the paths */
     const nodes: Node[] = [];
     const links: Link[] = [];
     graph.paths.forEach((path) => {
@@ -86,7 +85,7 @@ export default function PathsGraph(props: {
       });
     });
 
-    // Force simulation; gravitate to center and gravitate away from eachother
+    /** Force simulation; gravitate to center and gravitate away from eachother */
     const centerX = 0.5 * (ref?.current?.clientWidth || 0);
     const centerY = 0.5 * (ref?.current?.clientHeight || 0);
     const simulation = forceSimulation(nodes)
@@ -94,7 +93,7 @@ export default function PathsGraph(props: {
       .force("charge", forceManyBody().strength(-2000).distanceMax(300))
       .force("center", forceCenter(centerX, centerY));
 
-    // Add link arrow head definition to the svg
+    /** Add link arrow head definition to the svg */
     svg
       .append("svg:defs")
       .selectAll("marker")
@@ -110,7 +109,7 @@ export default function PathsGraph(props: {
       .append("svg:path")
       .attr("d", "M0,-5L10,0L0,5");
 
-    // Create group for the links
+    /** Create group for the links */
     const link = svg
       .append("g")
       .attr("class", "links")
@@ -122,38 +121,56 @@ export default function PathsGraph(props: {
       .attr("stroke-width", 2)
       .attr("marker-end", "url(#arrowhead)");
 
-    // Allow dragging nodes and their titles
+    /** Allow dragging nodes and their titles */
     const nodeDrag: d3.DragBehavior<
       SVGGElement,
       Node,
-      d3.SubjectPosition | Node
+      Node | d3.SubjectPosition
     > = drag();
-    nodeDrag.on("start", (event) => {
-      if (!event.active) simulation.alphaTarget(0.3).restart();
-      event.subject.fx = event.subject.x;
-      event.subject.fy = event.subject.y;
-    });
-    nodeDrag.on("drag", (event) => {
-      event.subject.fx = event.x;
-      event.subject.fy = event.y;
-    });
-    nodeDrag.on("end", (event) => {
-      if (!event.active) simulation.alphaTarget(0);
-      event.subject.fx = null;
-      event.subject.fy = null;
-    });
+    nodeDrag.on(
+      "start",
+      (
+        ev: D3DragEvent<SVGGElement, Node, Node | d3.SubjectPosition>,
+        subject
+      ) => {
+        if (!ev.active) simulation.alphaTarget(0.3).restart();
+        subject.fx = subject.x;
+        subject.fy = subject.y;
+      }
+    );
+    nodeDrag.on(
+      "drag",
+      (
+        ev: D3DragEvent<SVGGElement, Node, Node | d3.SubjectPosition>,
+        subject
+      ) => {
+        subject.fx = ev.x;
+        subject.fy = ev.y;
+      }
+    );
+    nodeDrag.on(
+      "end",
+      (
+        ev: D3DragEvent<SVGGElement, Node, Node | d3.SubjectPosition>,
+        subject
+      ) => {
+        if (!ev.active) simulation.alphaTarget(0);
+        subject.fx = null;
+        subject.fy = null;
+      }
+    );
 
-    // Add zoom and pan behaviour
+    /** Add zoom and pan behaviour */
     svg.call(
       zoom<SVGSVGElement, unknown>()
-        .on("zoom", ({ transform }) => {
-          select(".pages").attr("transform", transform);
-          select(".links").attr("transform", transform);
+        .on("zoom", (ev: D3ZoomEvent<SVGSVGElement, Node>) => {
+          select(".pages").attr("transform", ev.transform.toString());
+          select(".links").attr("transform", ev.transform.toString());
         })
         .scaleExtent([0.5, 4])
     );
 
-    // Create group for the pages/nodes
+    /** Create group for the pages/nodes */
     const node = svg
       .append("g")
       .attr("class", "pages")
@@ -163,7 +180,7 @@ export default function PathsGraph(props: {
       .append("g")
       .call(nodeDrag);
 
-    // Make nodes clickable, opening a tab to the corresponding Wikipedia article
+    /** Make nodes clickable, opening a tab to the corresponding Wikipedia article */
     const clickable = node
       .append("a")
       .attr("target", "_blank")
@@ -173,7 +190,7 @@ export default function PathsGraph(props: {
           `https://${graph.languageCode}.wikipedia.org/wiki/${node.title}`
       );
 
-    // Represent the nodes as colored circles
+    /** Represent the nodes as colored circles */
     const colors = scaleOrdinal(schemeCategory10);
     clickable
       .append("circle")
@@ -182,14 +199,14 @@ export default function PathsGraph(props: {
       .attr("stroke", "white")
       .attr("stroke-width", 2);
 
-    // Add the title corresponding to the node's page
+    /** Add the title corresponding to the node's page */
     clickable
       .append("text")
       .text((node) => {
         let text = node.title;
         if (
-          (node.id === graph.source && graph.sourceRedir) ||
-          (node.id === graph.target && graph.targetRedir)
+          (node.id === graph.sourcePage.id && graph.sourceIsRedir) ||
+          (node.id === graph.targetPage.id && graph.targetIsRedir)
         ) {
           text += " (redirected)";
         }
@@ -199,18 +216,18 @@ export default function PathsGraph(props: {
       .attr("x", 16)
       .attr("y", 5);
 
-    // Start physics simulation
+    /** Start physics simulation */
     simulation.on("tick", () => {
       link
         .attr("x1", (node: Link) => (node.source as Node).x?.toString() || "")
         .attr("y1", (node: Link) => (node.source as Node).y?.toString() || "")
         .attr("x2", (node: Link) => (node.target as Node).x?.toString() || "")
         .attr("y2", (node: Link) => (node.target as Node).y?.toString() || "");
-      node.attr("transform", (d) => `translate(${d.x},${d.y})`);
+      node.attr("transform", (d) => `translate(${d.x || 0},${d.y || 0})`);
     });
   }, [props]);
 
-  // Show graph, loading or nothing based on props
+  /** Show graph, loading or nothing based on props */
   const view = props.isLoading ? (
     <img src={Loading} alt="Loading..."></img>
   ) : props.graph ? (
@@ -223,4 +240,4 @@ export default function PathsGraph(props: {
   );
 
   return <div className="graph">{view}</div>;
-}
+};

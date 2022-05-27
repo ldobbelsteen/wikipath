@@ -1,9 +1,9 @@
-import { Page, getRandomPage, getSuggestions } from "../helpers/api";
 import React, { useRef, useState } from "react";
 import Autosuggest from "react-autosuggest";
+import { HTTP, Page } from "../api";
+import { weakStringEquals } from "../misc";
 import Dice from "../static/dice.svg";
 import Loading from "../static/loading.svg";
-import { weakStringEquals } from "../helpers/misc";
 
 const theme: Autosuggest.Theme = {
   container: {
@@ -38,65 +38,67 @@ const theme: Autosuggest.Theme = {
   },
 };
 
-export default function SearchInput(props: {
+export const PageInputSearch = (props: {
   id: string;
   input: string;
   invalid: boolean;
-  languageCode: string;
+  languageCode?: string;
   disabled: boolean;
   placeholder: string;
   setReady: (val: boolean) => void;
   setInput: (val: string) => void;
   setPage: (val: Page | undefined) => void;
-}): JSX.Element {
+}) => {
   const [suggestions, setSuggestions] = useState<Page[]>([]);
   const latestFetch = useRef(new AbortController());
   const [randomDisabled, setRandomDisabled] = useState(false);
 
-  // Fetch Wikipedia suggestions with support for abortion
+  /** Fetch Wikipedia suggestions with support for abortion */
   const updateSuggestions = (search: string) => {
-    props.setReady(false);
-    latestFetch.current.abort();
-    const newController = new AbortController();
-    latestFetch.current = newController;
-    getSuggestions(search, props.languageCode, 5, newController.signal)
-      .then((res) => {
-        setSuggestions(res);
-        props.setPage(res.find((page) => weakStringEquals(page.title, search)));
-        return;
-      })
-      .finally(() => {
-        props.setReady(true);
-      })
-      .catch((err) => {
-        if (err.name !== "AbortError") {
+    if (props.languageCode) {
+      props.setReady(false);
+      latestFetch.current.abort();
+      const newController = new AbortController();
+      latestFetch.current = newController;
+      HTTP.getSuggestions(props.languageCode, search, 5, newController.signal)
+        .then((suggestions) => {
+          setSuggestions(suggestions);
+          props.setPage(
+            suggestions.find((page) => weakStringEquals(page.title, search))
+          );
+          return null;
+        })
+        .finally(() => props.setReady(true))
+        .catch((err) => {
           setSuggestions([]);
           props.setInput("Error");
           props.setPage(undefined);
           console.error(err);
-        }
-      });
+        });
+    }
   };
 
-  // Fetch a random page from the API
+  /** Fetch a random page from the API */
   const randomPage = () => {
-    props.setReady(false);
-    setRandomDisabled(true);
-    getRandomPage(props.languageCode)
-      .then((page) => {
-        props.setInput(page.title);
-        props.setPage(page);
-        return;
-      })
-      .finally(() => {
-        props.setReady(true);
-        setRandomDisabled(false);
-      })
-      .catch((err) => {
-        props.setInput("Error");
-        props.setPage(undefined);
-        console.error(err);
-      });
+    if (props.languageCode) {
+      props.setReady(false);
+      setRandomDisabled(true);
+      HTTP.getRandomPage(props.languageCode)
+        .then((page) => {
+          props.setInput(page.title);
+          props.setPage(page);
+          return;
+        })
+        .finally(() => {
+          props.setReady(true);
+          setRandomDisabled(false);
+        })
+        .catch((err) => {
+          props.setInput("Error");
+          props.setPage(undefined);
+          console.error(err);
+        });
+    }
   };
 
   const random = randomDisabled ? (
@@ -134,4 +136,4 @@ export default function SearchInput(props: {
       {random}
     </div>
   );
-}
+};

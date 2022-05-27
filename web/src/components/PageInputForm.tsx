@@ -1,15 +1,14 @@
 import React, { useEffect, useState } from "react";
-import FindButton from "./FindButton";
-import LanguageSelect from "./LanguageSelect";
-import { Page } from "../helpers/api";
-import SearchInput from "./SearchInput";
+import { Page } from "../api";
 import Swap from "../static/swap.svg";
+import { PageInputLanguage } from "./PageInputLanguage";
+import { PageInputSearch } from "./PageInputSearch";
 
-export default function PageForm(props: {
+export const PageInputForm = (props: {
   isLoading: boolean;
-  fetchGraph: (source: Page, target: Page, languageCode: string) => void;
-}): JSX.Element {
-  const [languageCode, setLanguageCode] = useState("");
+  getGraph: (languageCode: string, sourceId: number, targetId: number) => void;
+}) => {
+  const [languageCode, setLanguageCode] = useState<string>();
   const [sourceInput, setSourceInput] = useState("");
   const [targetInput, setTargetInput] = useState("");
   const [sourcePage, setSourcePage] = useState<Page>();
@@ -21,7 +20,7 @@ export default function PageForm(props: {
   const [targetReady, setTargetReady] = useState(true);
   const [waitingForReady, setWaitingForReady] = useState(false);
 
-  // Clear input on language change
+  /** Clear input on language change */
   useEffect(() => {
     setSourcePage(undefined);
     setSourceInput("");
@@ -29,7 +28,7 @@ export default function PageForm(props: {
     setTargetInput("");
   }, [languageCode]);
 
-  // Remove invalid error on input change
+  /** Remove invalid error on input change */
   useEffect(() => {
     setSourceInvalid(false);
   }, [sourceInput]);
@@ -37,7 +36,7 @@ export default function PageForm(props: {
     setTargetInvalid(false);
   }, [targetInput]);
 
-  // Swap source and target inputs
+  /** Swap source and target inputs */
   function swap() {
     const temp = sourcePage;
     const tempInput = sourceInput;
@@ -47,22 +46,22 @@ export default function PageForm(props: {
     setTargetInput(tempInput);
   }
 
-  // Fetch the shortest path(s)
+  /** Fetch the shortest path(s) */
   function find() {
     const ready = sourceReady && targetReady;
     setWaitingForReady(!ready);
     if (ready) {
       setSourceInvalid(!sourcePage);
       setTargetInvalid(!targetPage);
-      if (sourcePage && targetPage) {
+      if (languageCode && sourcePage && targetPage) {
         setSourceInput(sourcePage.title);
         setTargetInput(targetPage.title);
-        props.fetchGraph(sourcePage, targetPage, languageCode);
+        props.getGraph(languageCode, sourcePage.id, targetPage.id);
       }
     }
   }
 
-  // If both inputs are ready and we're waiting, find
+  /** If both inputs are ready and we're waiting, find */
   useEffect(() => {
     if (sourceReady && targetReady && waitingForReady) find();
   });
@@ -71,8 +70,12 @@ export default function PageForm(props: {
     <div className="form">
       <p>Find the shortest path between any two Wikipedia pages</p>
       <div id="form-div">
-        <LanguageSelect disabled={props.isLoading} selected={setLanguageCode} />
-        <SearchInput
+        <PageInputLanguage
+          disabled={props.isLoading}
+          selectedLanguageCode={languageCode}
+          setSelectedLanguageCode={setLanguageCode}
+        />
+        <PageInputSearch
           id={"source"}
           input={sourceInput}
           invalid={sourceInvalid}
@@ -91,7 +94,7 @@ export default function PageForm(props: {
           disabled={props.isLoading}
           onClick={swap}
         ></input>
-        <SearchInput
+        <PageInputSearch
           id={"target"}
           input={targetInput}
           invalid={targetInvalid}
@@ -102,12 +105,10 @@ export default function PageForm(props: {
           setInput={setTargetInput}
           setPage={setTargetPage}
         />
-        <FindButton
-          disabled={props.isLoading || waitingForReady}
-          text="Find!"
-          onClick={find}
-        />
+        <button disabled={props.isLoading || waitingForReady} onClick={find}>
+          Find!
+        </button>
       </div>
     </div>
   );
-}
+};

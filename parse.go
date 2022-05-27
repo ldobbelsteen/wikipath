@@ -17,18 +17,18 @@ const ChannelBufferSize = 24576
 const ReaderBufferSize = 16384
 
 type Page struct {
-	id    PageID
+	id    PageId
 	title string
 }
 
 type Redir struct {
-	source PageID
-	target PageID
+	source PageId
+	target PageId
 }
 
 type Link struct {
-	source PageID
-	target PageID
+	source PageId
+	target PageId
 }
 
 // Parse the page dump file using a regular expression. It extracts the page_id and page_title columns from the tuples in the dump,
@@ -37,7 +37,7 @@ type Link struct {
 // 0 and 1 is sent.
 func pageDumpParse(path string, progress chan<- float64) (<-chan Page, error) {
 	pages := make(chan Page, ChannelBufferSize)
-	match := func(match []string) { pages <- Page{parsePageID(match[0]), match[1]} }
+	match := func(match []string) { pages <- Page{parsePageId(match[0]), match[1]} }
 	finished := func() { close(pages) }
 	regex := regexp.MustCompile(`\(([0-9]{1,10}),0,'(.{1,255}?)','',[01],[01],[0-9.]+?,'[0-9]+?',(?:'[0-9]+?'|NULL),[0-9]{1,10},[0-9]{1,10},'wikitext',NULL\)`)
 	return pages, dumpParse(path, regex, 2048, match, finished, progress)
@@ -47,10 +47,10 @@ func pageDumpParse(path string, progress chan<- float64) (<-chan Page, error) {
 // following the table format from https://www.mediawiki.org/wiki/Manual:Redirect_table. Only redirects in the 0 namespace are accepted.
 // The rd_title is converted to its corresponding ID using a titler map that should be supplied. Output matches to a returned channel
 // which is closed upon completion. Accepts a channel through with current progress between 0 and 1 is sent.
-func redirDumpParse(path string, titler map[string]PageID, progress chan<- float64) (<-chan Redir, error) {
+func redirDumpParse(path string, titler map[string]PageId, progress chan<- float64) (<-chan Redir, error) {
 	redirs := make(chan Redir, ChannelBufferSize)
 	match := func(match []string) {
-		source := parsePageID(match[0])
+		source := parsePageId(match[0])
 		if target, titleExists := titler[match[1]]; titleExists && source != target {
 			redirs <- Redir{source: source, target: target}
 		}
@@ -65,10 +65,10 @@ func redirDumpParse(path string, titler map[string]PageID, progress chan<- float
 // namespaces are 0, are accepted. The pl_title is converted to its corresponding ID using a titler map that should be supplied.
 // Any redirects in the supplied redirect map are followed such that neither the resulting source nor target are a redirect. Output
 // matches to a returned channel which is closed upon completion. Accepts a channel through with current progress between 0 and 1 is sent.
-func linkDumpParse(path string, titler map[string]PageID, redirects map[PageID]PageID, progress chan<- float64) (<-chan Link, error) {
+func linkDumpParse(path string, titler map[string]PageId, redirects map[PageId]PageId, progress chan<- float64) (<-chan Link, error) {
 	links := make(chan Link, ChannelBufferSize)
 	match := func(match []string) {
-		source := parsePageID(match[0])
+		source := parsePageId(match[0])
 		if newSource, isRedirect := redirects[source]; isRedirect {
 			source = newSource
 		}
@@ -175,7 +175,7 @@ func dumpParse(path string, regex *regexp.Regexp, maxRegexSize int, output func(
 // are 10 digit unsigned integers, meaning the max value is 9999999999. This number fits in a
 // 34 bit integer. However, to save space, the number is parsed into a 32 bit integer. This
 // means any page ID above 4294967296 will not be parsed correctly.
-func parsePageID(str string) PageID {
+func parsePageId(str string) PageId {
 	id, err := strconv.ParseUint(str, 10, 34)
 	if err != nil {
 		return 0

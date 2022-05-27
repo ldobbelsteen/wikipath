@@ -28,7 +28,7 @@ func serve(databaseDir string, webDir string) error {
 				log.Print("failed to open and thus skipping ", file.Name(), ": ", err)
 				continue
 			}
-			databases[database.LangCode] = database
+			databases[database.LanguageCode] = database
 		}
 	}
 
@@ -76,12 +76,12 @@ func serve(databaseDir string, webDir string) error {
 		}
 
 		// Parse the IDs and return if not valid
-		source := parsePageID(sourceRaw)
+		source := parsePageId(sourceRaw)
 		if source == 0 {
 			http.Error(writer, "source is not a page ID", http.StatusBadRequest)
 			return
 		}
-		target := parsePageID(targetRaw)
+		target := parsePageId(targetRaw)
 		if target == 0 {
 			http.Error(writer, "target is not a page ID", http.StatusBadRequest)
 			return
@@ -95,18 +95,18 @@ func serve(databaseDir string, webDir string) error {
 		}
 
 		// Check if IDs are too large anyways
-		if source > database.MaxPageID {
+		if source > database.LargestPageId {
 			http.Error(writer, "source ID is too large", http.StatusBadRequest)
 			return
 		}
-		if target > database.MaxPageID {
+		if target > database.LargestPageId {
 			http.Error(writer, "target ID is too large", http.StatusBadRequest)
 			return
 		}
 
 		// Get the shortest paths graph and write it as a response
 		err := database.runTransaction(request.Context(), func(tx Transaction) {
-			graph, err := tx.getShortestPaths(source, target)
+			graph, err := tx.getShortestPaths(languageCode, source, target)
 			if err != nil {
 				if errors.Is(err, context.Canceled) {
 					http.Error(writer, "request timeout", http.StatusRequestTimeout)

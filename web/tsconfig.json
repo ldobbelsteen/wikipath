@@ -1,9 +1,15 @@
 {
-    "compilerOptions": {
-        "esModuleInterop": true,
-        "jsx": "preserve",
-        "lib": ["DOM", "es2018"],
-        "strict": true,
-    },
-    "include": ["src", "src/custom.d.ts"]
+  "compilerOptions": {
+    "allowJs": false,
+    "esModuleInterop": true,
+    "jsx": "react",
+    "lib": [
+      "dom",
+      "esnext",
+    ],
+    "module": "esnext",
+    "moduleResolution": "node",
+    "skipDefaultLibCheck": true,
+    "strict": true
+  }
 }

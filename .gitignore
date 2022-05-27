@@ -1,9 +1,3 @@
-.git
-
-tools
 wikipath
 databases
 dumps
-
-web/node_modules
-web/dist

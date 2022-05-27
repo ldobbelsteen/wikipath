@@ -7,18 +7,18 @@ import (
 	"sort"
 )
 
-type PageID = uint32
+type PageId = uint32
 
 type Database struct {
-	self             *sql.DB
-	redirectTemplate *sql.Stmt
-	incomingTemplate *sql.Stmt
-	outgoingTemplate *sql.Stmt
-	BuildDate        string `json:"buildDate"`
-	DumpDate         string `json:"dumpDate"`
-	LangCode         string `json:"languageCode"`
-	LangName         string `json:"languageName"`
-	MaxPageID        PageID `json:"maxPageID"`
+	self              *sql.DB
+	redirectStatement *sql.Stmt
+	incomingStatement *sql.Stmt
+	outgoingStatement *sql.Stmt
+	BuildDate         string `json:"buildDate"`
+	DumpDate          string `json:"dumpDate"`
+	LanguageCode      string `json:"languageCode"`
+	LanguageName      string `json:"languageName"`
+	LargestPageId     PageId `json:"largestPageId"`
 }
 
 type Transaction struct {
@@ -30,13 +30,14 @@ type Transaction struct {
 }
 
 type Graph struct {
-	Links       map[PageID][]PageID `json:"links"`
-	Count       int                 `json:"count"`
-	Degree      int                 `json:"degree"`
-	Source      PageID              `json:"source"`
-	Target      PageID              `json:"target"`
-	SourceRedir bool                `json:"sourceRedir"`
-	TargetRedir bool                `json:"targetRedir"`
+	LanguageCode  string              `json:"languageCode"`
+	Links         map[PageId][]PageId `json:"links"`
+	PathCount     int                 `json:"pathCount"`
+	PathDegrees   int                 `json:"pathDegrees"`
+	SourceId      PageId              `json:"sourceId"`
+	TargetId      PageId              `json:"targetId"`
+	SourceIsRedir bool                `json:"sourceIsRedir"`
+	TargetIsRedir bool                `json:"targetIsRedir"`
 }
 
 func openDatabase(path string) (*Database, error) {
@@ -67,13 +68,13 @@ func openDatabase(path string) (*Database, error) {
 	if err != nil {
 		return nil, err
 	}
-	maxPageIdStr, err := getMetadata("maxPageID")
+	largestPageIdStr, err := getMetadata("largestPageId")
 	if err != nil {
 		return nil, err
 	}
-	maxPageID := parsePageID(maxPageIdStr)
-	if maxPageID == 0 {
-		return nil, errors.New("invalid maxPageID in metadata")
+	largestPageId := parsePageId(largestPageIdStr)
+	if largestPageId == 0 {
+		return nil, errors.New("invalid largestPageId in metadata")
 	}
 
 	// Prepare statement templates for later transactions
@@ -91,15 +92,15 @@ func openDatabase(path string) (*Database, error) {
 	}
 
 	return &Database{
-		self:             database,
-		redirectTemplate: redirectTemplate,
-		incomingTemplate: incomingTemplate,
-		outgoingTemplate: outgoingTemplate,
-		BuildDate:        buildDate,
-		DumpDate:         dumpDate,
-		LangCode:         langCode,
-		LangName:         langName,
-		MaxPageID:        maxPageID,
+		self:              database,
+		redirectStatement: redirectTemplate,
+		incomingStatement: incomingTemplate,
+		outgoingStatement: outgoingTemplate,
+		BuildDate:         buildDate,
+		DumpDate:          dumpDate,
+		LanguageCode:      langCode,
+		LanguageName:      langName,
+		LargestPageId:     largestPageId,
 	}, nil
 }
 
@@ -111,17 +112,17 @@ func (db *Database) runTransaction(ctx context.Context, fn func(tx Transaction))
 	}
 	fn(Transaction{
 		self:     tx,
-		redirect: tx.Stmt(db.redirectTemplate),
-		incoming: tx.Stmt(db.incomingTemplate),
-		outgoing: tx.Stmt(db.outgoingTemplate),
+		redirect: tx.Stmt(db.redirectStatement),
+		incoming: tx.Stmt(db.incomingStatement),
+		outgoing: tx.Stmt(db.outgoingStatement),
 		context:  ctx,
 	})
 	return tx.Commit()
 }
 
 // Get the page to which a page redirects. Returns 0 if no redirect was found.
-func (tx Transaction) getRedirect(page PageID) (PageID, error) {
-	var result PageID
+func (tx Transaction) getRedirect(page PageId) (PageId, error) {
+	var result PageId
 	err := tx.redirect.QueryRowContext(tx.context, page).Scan(&result)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -133,11 +134,11 @@ func (tx Transaction) getRedirect(page PageID) (PageID, error) {
 }
 
 // Get the incoming links of a page. Returns empty slice if no links were found.
-func (tx Transaction) getIncoming(page PageID) ([]PageID, error) {
+func (tx Transaction) getIncoming(page PageId) ([]PageId, error) {
 	var data []byte
 	if err := tx.incoming.QueryRowContext(tx.context, page).Scan(&data); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return []PageID{}, nil
+			return []PageId{}, nil
 		} else {
 			return nil, err
 		}
@@ -146,11 +147,11 @@ func (tx Transaction) getIncoming(page PageID) ([]PageID, error) {
 }
 
 // Get the outgoing links of a page. Returns empty slice if no links were found.
-func (tx Transaction) getOutgoing(page PageID) ([]PageID, error) {
+func (tx Transaction) getOutgoing(page PageId) ([]PageId, error) {
 	var data []byte
 	if err := tx.outgoing.QueryRowContext(tx.context, page).Scan(&data); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return []PageID{}, nil
+			return []PageId{}, nil
 		} else {
 			return nil, err
 		}
@@ -159,15 +160,16 @@ func (tx Transaction) getOutgoing(page PageID) ([]PageID, error) {
 }
 
 // Find the paths of the shortest possible degree between a source and target page
-func (tx Transaction) getShortestPaths(source PageID, target PageID) (*Graph, error) {
+func (tx Transaction) getShortestPaths(langCode string, source PageId, target PageId) (*Graph, error) {
 	graph := &Graph{
-		Links:       map[PageID][]PageID{},
-		Count:       0,
-		Degree:      0,
-		Source:      source,
-		Target:      target,
-		SourceRedir: false,
-		TargetRedir: false,
+		Links:         map[PageId][]PageId{},
+		PathCount:     0,
+		PathDegrees:   0,
+		SourceId:      source,
+		TargetId:      target,
+		SourceIsRedir: false,
+		TargetIsRedir: false,
+		LanguageCode:  langCode,
 	}
 
 	// Follow any redirects for the source and target
@@ -175,22 +177,22 @@ func (tx Transaction) getShortestPaths(source PageID, target PageID) (*Graph, er
 		return nil, err
 	} else if sourceRedir != 0 {
 		source = sourceRedir
-		graph.SourceRedir = true
-		graph.Source = source
+		graph.SourceIsRedir = true
+		graph.SourceId = source
 	}
 	if targetRedir, err := tx.getRedirect(target); err != nil {
 		return nil, err
 	} else if targetRedir != 0 {
 		target = targetRedir
-		graph.TargetRedir = true
-		graph.Target = target
+		graph.TargetIsRedir = true
+		graph.TargetId = target
 	}
 
-	forwardParents := map[PageID][]PageID{source: {}}
-	backwardParents := map[PageID][]PageID{target: {}}
-	forwardQueue := []PageID{source}
-	backwardQueue := []PageID{target}
-	overlapping := map[PageID]bool{}
+	forwardParents := map[PageId][]PageId{source: {}}
+	backwardParents := map[PageId][]PageId{target: {}}
+	forwardQueue := []PageId{source}
+	backwardQueue := []PageId{target}
+	overlapping := map[PageId]bool{}
 	forwardDepth := 0
 	backwardDepth := 0
 
@@ -203,7 +205,7 @@ func (tx Transaction) getShortestPaths(source PageID, target PageID) (*Graph, er
 
 	// Run bidirectional breadth-first search until the searches intersect
 	for len(overlapping) == 0 && len(forwardQueue) > 0 && len(backwardQueue) > 0 {
-		newParents := map[PageID]map[PageID]struct{}{}
+		newParents := map[PageId]map[PageId]struct{}{}
 		forwardLength := len(forwardQueue)
 		backwardLength := len(backwardQueue)
 		if forwardLength < backwardLength {
@@ -220,7 +222,7 @@ func (tx Transaction) getShortestPaths(source PageID, target PageID) (*Graph, er
 						if set, exists := newParents[out]; exists {
 							set[page] = member
 						} else {
-							newParents[out] = map[PageID]struct{}{page: member}
+							newParents[out] = map[PageId]struct{}{page: member}
 						}
 						if _, visited := backwardParents[out]; visited {
 							overlapping[out] = true
@@ -248,7 +250,7 @@ func (tx Transaction) getShortestPaths(source PageID, target PageID) (*Graph, er
 						if set, exists := newParents[in]; exists {
 							set[page] = member
 						} else {
-							newParents[in] = map[PageID]struct{}{page: member}
+							newParents[in] = map[PageId]struct{}{page: member}
 						}
 						if _, visited := forwardParents[in]; visited {
 							overlapping[in] = true
@@ -267,15 +269,15 @@ func (tx Transaction) getShortestPaths(source PageID, target PageID) (*Graph, er
 
 	// Backtrack from all overlapping pages. Stores the total number of paths
 	// and all links in the final paths into the graph.
-	forwardPathCounts := map[PageID]int{}
-	backwardPathCounts := map[PageID]int{}
+	forwardPathCounts := map[PageId]int{}
+	backwardPathCounts := map[PageId]int{}
 	for overlap := range overlapping {
 		forwardPathCount := extractPathCount(overlap, forwardPathCounts, true, backwardParents, graph.Links)
 		backwardPathCount := extractPathCount(overlap, backwardPathCounts, false, forwardParents, graph.Links)
-		graph.Count += forwardPathCount * backwardPathCount
+		graph.PathCount += forwardPathCount * backwardPathCount
 	}
-	if graph.Count != 0 {
-		graph.Degree = forwardDepth + backwardDepth
+	if graph.PathCount != 0 {
+		graph.PathDegrees = forwardDepth + backwardDepth
 	}
 
 	// Sort all links to make the result deterministic
@@ -288,10 +290,10 @@ func (tx Transaction) getShortestPaths(source PageID, target PageID) (*Graph, er
 
 // Extract the number of possible paths from a page to the source or target.
 // Uses path count memoization to reduce recursions. Stores any occurred links into the links map.
-func extractPathCount(page PageID, counts map[PageID]int, forward bool, parents map[PageID][]PageID, links map[PageID][]PageID) int {
+func extractPathCount(page PageId, counts map[PageId]int, forward bool, parents map[PageId][]PageId, links map[PageId][]PageId) int {
 	directParents := parents[page]
 	if len(directParents) > 0 {
-		duplicates := map[PageID]bool{}
+		duplicates := map[PageId]bool{}
 		for _, parent := range directParents {
 			if !duplicates[parent] {
 				duplicates[parent] = true
