@@ -5,10 +5,15 @@ import { PageInputLanguage } from "./PageInputLanguage";
 import { PageInputSearch } from "./PageInputSearch";
 
 export const PageInputForm = (props: {
-  isLoading: boolean;
-  getGraph: (languageCode: string, sourceId: number, targetId: number) => void;
+  disabled: boolean;
+  submitForm: (
+    languageCode: string,
+    sourceId: number,
+    targetId: number
+  ) => void;
 }) => {
   const [languageCode, setLanguageCode] = useState<string>();
+
   const [sourceInput, setSourceInput] = useState("");
   const [targetInput, setTargetInput] = useState("");
   const [sourcePage, setSourcePage] = useState<Page>();
@@ -56,7 +61,7 @@ export const PageInputForm = (props: {
       if (languageCode && sourcePage && targetPage) {
         setSourceInput(sourcePage.title);
         setTargetInput(targetPage.title);
-        props.getGraph(languageCode, sourcePage.id, targetPage.id);
+        props.submitForm(languageCode, sourcePage.id, targetPage.id);
       }
     }
   }
@@ -71,7 +76,7 @@ export const PageInputForm = (props: {
       <p>Find the shortest path between any two Wikipedia pages</p>
       <div id="form-div">
         <PageInputLanguage
-          disabled={props.isLoading}
+          disabled={props.disabled}
           selectedLanguageCode={languageCode}
           setSelectedLanguageCode={setLanguageCode}
         />
@@ -80,7 +85,7 @@ export const PageInputForm = (props: {
           input={sourceInput}
           invalid={sourceInvalid}
           languageCode={languageCode}
-          disabled={props.isLoading}
+          disabled={props.disabled}
           placeholder={"Starting page"}
           setReady={setSourceReady}
           setInput={setSourceInput}
@@ -91,7 +96,7 @@ export const PageInputForm = (props: {
           type="image"
           src={Swap}
           alt="Get random page"
-          disabled={props.isLoading}
+          disabled={props.disabled}
           onClick={swap}
         ></input>
         <PageInputSearch
@@ -99,13 +104,13 @@ export const PageInputForm = (props: {
           input={targetInput}
           invalid={targetInvalid}
           languageCode={languageCode}
-          disabled={props.isLoading}
+          disabled={props.disabled}
           placeholder={"End page"}
           setReady={setTargetReady}
           setInput={setTargetInput}
           setPage={setTargetPage}
         />
-        <button disabled={props.isLoading || waitingForReady} onClick={find}>
+        <button disabled={props.disabled || waitingForReady} onClick={find}>
           Find!
         </button>
       </div>

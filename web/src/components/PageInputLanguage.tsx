@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { toast } from "react-hot-toast";
 import { Database, HTTP } from "../api";
 
 export const PageInputLanguage = (props: {
@@ -28,7 +29,12 @@ export const PageInputLanguage = (props: {
         return null;
       })
       .finally(() => setIsLoading(false))
-      .catch(console.error);
+      .catch((err) => {
+        toast.error(
+          "An unexpected error occurred while getting the available languages :("
+        );
+        console.error(err);
+      });
   }, [setSelectedLanguageCode]);
 
   return (

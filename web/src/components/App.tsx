@@ -1,24 +1,26 @@
 import "../styles.scss";
 import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
+import { Toaster, toast } from "react-hot-toast";
 import { Graph, HTTP } from "../api";
 import { PageInputForm } from "./PageInputForm";
 import { ResultGraph } from "./ResultGraph";
 
 const App = () => {
-  const [isLoading, setLoading] = useState(false);
-  const [graph, setGraph] = useState<Graph | string>();
+  const [graph, setGraph] = useState<Graph | string | undefined>("");
 
-  const getGraph = (
+  const submitForm = (
     languageCode: string,
     sourceId: number,
     targetId: number
   ) => {
-    setLoading(true);
+    setGraph(undefined);
     HTTP.getGraph(languageCode, sourceId, targetId)
       .then(setGraph)
-      .finally(() => setLoading(false))
-      .catch(console.error);
+      .catch((err) => {
+        toast.error("An unexpected error occurred while getting your graph :(");
+        console.error(err);
+      });
   };
 
   return (
@@ -26,11 +28,12 @@ const App = () => {
       <header>
         <a href="/">Wikipath</a>
       </header>
-      <PageInputForm isLoading={isLoading} getGraph={getGraph} />
-      <ResultGraph isLoading={isLoading} graph={graph} />
+      <PageInputForm disabled={graph === undefined} submitForm={submitForm} />
+      <ResultGraph isLoading={graph === undefined} graph={graph} />
       <div className="bottom-right">
         <a href="https://github.com/ldobbelsteen/wikipath">Source code</a>
       </div>
+      <Toaster />
     </>
   );
 };

@@ -1,5 +1,6 @@
 import React, { useRef, useState } from "react";
 import Autosuggest from "react-autosuggest";
+import { toast } from "react-hot-toast";
 import { HTTP, Page } from "../api";
 import { weakStringEquals } from "../misc";
 import Dice from "../static/dice.svg";
@@ -71,8 +72,10 @@ export const PageInputSearch = (props: {
         .finally(() => props.setReady(true))
         .catch((err) => {
           setSuggestions([]);
-          props.setInput("Error");
           props.setPage(undefined);
+          toast.error(
+            "An unexpected error occurred while getting page suggestions :("
+          );
           console.error(err);
         });
     }
@@ -94,8 +97,8 @@ export const PageInputSearch = (props: {
           setRandomDisabled(false);
         })
         .catch((err) => {
-          props.setInput("Error");
           props.setPage(undefined);
+          toast.error("An unexpected error occurred while a random page :(");
           console.error(err);
         });
     }
