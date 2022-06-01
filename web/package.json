@@ -10,7 +10,7 @@
     "@types/react-autosuggest": "^10.1.5",
     "@types/react-dom": "^18.0.5",
     "@typescript-eslint/eslint-plugin": "^5.26.0",
-    "@typescript-eslint/parser": "^5.26.0",
+    "@typescript-eslint/parser": "^5.27.0",
     "d3": "^7.4.4",
     "eslint": "^8.16.0",
     "eslint-config-prettier": "^8.5.0",
