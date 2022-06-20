@@ -71,5 +71,5 @@ docker run \
     --restart always \
     --publish 1789:1789 \
     --volume /path/to/db/directory:/databases \
-    ghcr.io/ldobbelsteen/wikipath:main
+    ghcr.io/ldobbelsteen/wikipath
 ```
