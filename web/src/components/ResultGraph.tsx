@@ -122,16 +122,12 @@ export const ResultGraph = (props: {
       .attr("marker-end", "url(#arrowhead)");
 
     /** Allow dragging nodes and their titles */
-    const nodeDrag: d3.DragBehavior<
-      SVGGElement,
-      Node,
-      Node | d3.SubjectPosition
-    > = drag();
+    const nodeDrag = drag<SVGGElement, Node>();
     nodeDrag.on(
       "start",
       (
         ev: D3DragEvent<SVGGElement, Node, Node | d3.SubjectPosition>,
-        subject
+        subject: Node
       ) => {
         if (!ev.active) simulation.alphaTarget(0.3).restart();
         subject.fx = subject.x;
@@ -142,7 +138,7 @@ export const ResultGraph = (props: {
       "drag",
       (
         ev: D3DragEvent<SVGGElement, Node, Node | d3.SubjectPosition>,
-        subject
+        subject: Node
       ) => {
         subject.fx = ev.x;
         subject.fy = ev.y;
@@ -152,7 +148,7 @@ export const ResultGraph = (props: {
       "end",
       (
         ev: D3DragEvent<SVGGElement, Node, Node | d3.SubjectPosition>,
-        subject
+        subject: Node
       ) => {
         if (!ev.active) simulation.alphaTarget(0);
         subject.fx = null;
