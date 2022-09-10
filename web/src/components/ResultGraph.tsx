@@ -176,7 +176,10 @@ export const ResultGraph = (props: {
       .append("g")
       .call(nodeDrag);
 
-    /** Make nodes clickable, opening a tab to the corresponding Wikipedia article */
+    /**
+     * Make nodes clickable, opening a tab to the corresponding Wikipedia
+     * article
+     */
     const clickable = node
       .append("a")
       .attr("target", "_blank")

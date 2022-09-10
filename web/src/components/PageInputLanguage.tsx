@@ -12,7 +12,10 @@ export const PageInputLanguage = (props: {
   const [isLoading, setIsLoading] = useState(true);
   const [databases, setDatabases] = useState<Database[]>();
 
-  /** Fetch available databases and select based on the user's browser language(s) */
+  /**
+   * Fetch available databases and select based on the user's browser
+   * language(s)
+   */
   useEffect(() => {
     HTTP.getDatabases()
       .then((databases) => {
