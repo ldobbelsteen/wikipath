@@ -39,7 +39,7 @@ func pageDumpParse(path string, progress chan<- float64) (<-chan Page, error) {
 	pages := make(chan Page, ChannelBufferSize)
 	match := func(match []string) { pages <- Page{parsePageId(match[0]), match[1]} }
 	finished := func() { close(pages) }
-	regex := regexp.MustCompile(`\(([0-9]{1,10}),0,'(.{1,255}?)','',[01],[01],[0-9.]+?,'[0-9]+?',(?:'[0-9]+?'|NULL),[0-9]{1,10},[0-9]{1,10},'wikitext',NULL\)`)
+	regex := regexp.MustCompile(`\(([0-9]{1,10}),0,'(.{1,255}?)',[01],[01],[0-9.]+?,'[0-9]+?',(?:'[0-9]+?'|NULL),[0-9]{1,10},[0-9]{1,10},'wikitext',NULL\)`)
 	return pages, dumpParse(path, regex, 2048, match, finished, progress)
 }
 
