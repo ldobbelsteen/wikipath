@@ -47,7 +47,10 @@ impl Databases {
 }
 
 pub async fn serve(database_dir: &str, listening_port: u16) {
-    let databases = Databases::open(database_dir).unwrap();
+    let databases = Databases::open(database_dir).unwrap_or_else(|e| {
+        eprintln!("{}", e);
+        std::process::exit(1);
+    });
 
     async fn list_databases(Extension(databases): Extension<Arc<Databases>>) -> Response {
         let list = databases.list();
