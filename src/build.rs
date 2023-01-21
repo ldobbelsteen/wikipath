@@ -1,8 +1,6 @@
-use std::time::Instant;
-
-use indicatif::HumanDuration;
-
 use crate::{database::Database, dump::Dump};
+use indicatif::HumanDuration;
+use std::time::Instant;
 
 pub async fn build(lang_code: &str, database_dir: &str, dumps_dir: &str) {
     let start = Instant::now();

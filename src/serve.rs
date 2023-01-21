@@ -28,7 +28,7 @@ impl Databases {
             if let Ok(entry) = entry {
                 let path = entry.path();
                 if path.is_dir() {
-                    match Database::open(&path) {
+                    match Database::open(path) {
                         Ok(database) => {
                             map.insert(database.lang_code.to_string(), database);
                         }

@@ -4,7 +4,6 @@ use crate::{
 };
 use bincode::{deserialize, serialize};
 use error_chain::error_chain;
-use regex::Regex;
 use serde::Serialize;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -20,13 +19,17 @@ error_chain! {
     }
 
     errors {
-        ShortestPaths(msg: String) {
+        ShortestPathsAlgo(msg: String) {
             description("error in shortest paths algorithm")
-            display("unexpected error in shortest pzaths algorithm: {}", msg)
+            display("unexpected error in shortest paths algorithm: {}", msg)
         }
-        AlreadyExists(path: String) {
+        DatabaseAlreadyExists(path: PathBuf) {
             description("database already exists")
-            display("database to build already exists: {}", path)
+            display("database to build already exists: {}", path.display())
+        }
+        InvalidDatabasePath(path: PathBuf, reason: String) {
+            description("invalid database path")
+            display("database path '{}' is invalid: {}", path.display(), reason)
         }
     }
 }
@@ -68,14 +71,45 @@ pub struct Database {
 }
 
 impl Database {
-    pub fn build(output_dir: &str, dump: &Dump) -> Result<PathBuf> {
+    pub fn open(path: PathBuf) -> Result<Self> {
+        let database = sled::open(&path)?;
+        let name = path.as_path().file_name().and_then(|s| s.to_str()).ok_or(
+            ErrorKind::InvalidDatabasePath(path.clone(), "invalid string".into()),
+        )?;
+        let mut parts = name.split("-");
+        let lang_code = parts.next().ok_or(ErrorKind::InvalidDatabasePath(
+            path.clone(),
+            "no language code included".into(),
+        ))?;
+        let dump_date = parts.next().ok_or(ErrorKind::InvalidDatabasePath(
+            path.clone(),
+            "no dump date included".into(),
+        ))?;
+        if parts.next().is_some() {
+            return Err(ErrorKind::InvalidDatabasePath(
+                path.into(),
+                "invalid database name format".into(),
+            )
+            .into());
+        }
+
+        Ok(Database {
+            incoming: database.open_tree("incoming")?,
+            outgoing: database.open_tree("outgoing")?,
+            redirects: database.open_tree("redirects")?,
+            lang_code: lang_code.to_string(),
+            dump_date: dump_date.to_string(),
+        })
+    }
+
+    pub fn build(dir: &str, dump: &Dump) -> Result<PathBuf> {
         let step = step_progress("Initializing database".into());
         let name = format!("{}-{}", dump.lang_code, dump.date);
-        let path = Path::new(output_dir).join(name);
+        let path = Path::new(dir).join(name);
         if path.exists() {
-            return Err(ErrorKind::AlreadyExists(path.display().to_string()).into());
+            return Err(ErrorKind::DatabaseAlreadyExists(path).into());
         }
-        let db = Self::open(&path)?;
+        let db = Self::open(path.clone())?;
         step.finish();
 
         let progress = multi_progress();
@@ -115,28 +149,6 @@ impl Database {
         step.finish();
 
         Ok(path)
-    }
-
-    pub fn open(dir: &Path) -> Result<Self> {
-        let name_err = sled::Error::Unsupported("invalid database name".to_string());
-
-        let name = dir.file_name().ok_or(name_err.clone())?;
-        let caps = Regex::new(r"(.+)-([0-9]{8})")
-            .unwrap()
-            .captures(name.to_str().ok_or(name_err.clone())?)
-            .ok_or(name_err.clone())?;
-        let lang_code = caps.get(1).ok_or(name_err.clone())?.as_str();
-        let date = caps.get(2).ok_or(name_err.clone())?.as_str();
-
-        let db = sled::open(dir)?;
-
-        Ok(Database {
-            incoming: db.open_tree("incoming")?,
-            outgoing: db.open_tree("outgoing")?,
-            redirects: db.open_tree("redirects")?,
-            lang_code: lang_code.to_string(),
-            dump_date: date.to_string(),
-        })
     }
 
     fn get_redirect(&self, id: PageId) -> Result<Option<PageId>> {
@@ -203,7 +215,9 @@ impl Database {
                 for _ in 0..forward_queue.len() {
                     let page = forward_queue
                         .pop_front()
-                        .ok_or(ErrorKind::ShortestPaths("empty forward queue".to_string()))?;
+                        .ok_or(ErrorKind::ShortestPathsAlgo(
+                            "empty forward queue".to_string(),
+                        ))?;
                     if let Some(outgoing) = self.get_outgoing(page)? {
                         for out in outgoing {
                             if !forward_parents.contains_key(&out) {
@@ -235,7 +249,9 @@ impl Database {
                 for _ in 0..backward_queue.len() {
                     let page = backward_queue
                         .pop_front()
-                        .ok_or(ErrorKind::ShortestPaths("empty backward queue".to_string()))?;
+                        .ok_or(ErrorKind::ShortestPathsAlgo(
+                            "empty backward queue".to_string(),
+                        ))?;
                     if let Some(incoming) = self.get_incoming(page)? {
                         for inc in incoming {
                             if !backward_parents.contains_key(&inc) {
@@ -304,7 +320,7 @@ impl Database {
                             *counts.entry(page).or_default() += parent_count;
                         }
                     }
-                    return Ok(*counts.get(&page).ok_or(ErrorKind::ShortestPaths(
+                    return Ok(*counts.get(&page).ok_or(ErrorKind::ShortestPathsAlgo(
                         "unmemoized path count".to_string(),
                     ))?);
                 }
