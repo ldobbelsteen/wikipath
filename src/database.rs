@@ -13,6 +13,7 @@ use std::{
 
 error_chain! {
     foreign_links {
+        Io(std::io::Error);
         Sled(sled::Error);
         Dump(dump::Error);
         Encoding(bincode::Error);
@@ -85,13 +86,6 @@ impl Database {
             path.clone(),
             "no dump date included".into(),
         ))?;
-        if parts.next().is_some() {
-            return Err(ErrorKind::InvalidDatabasePath(
-                path.into(),
-                "invalid database name format".into(),
-            )
-            .into());
-        }
 
         Ok(Database {
             incoming: database.open_tree("incoming")?,
@@ -105,11 +99,17 @@ impl Database {
     pub fn build(dir: &str, dump: &Dump) -> Result<PathBuf> {
         let step = step_progress("Initializing database".into());
         let name = format!("{}-{}", dump.lang_code, dump.date);
-        let path = Path::new(dir).join(name);
+        let tmp_suffix = "-tmp";
+        let path = Path::new(dir).join(name.clone());
         if path.exists() {
             return Err(ErrorKind::DatabaseAlreadyExists(path).into());
         }
-        let db = Self::open(path.clone())?;
+        let tmp_path = Path::new(dir).join(name + tmp_suffix);
+        if tmp_path.exists() {
+            return Err(ErrorKind::DatabaseAlreadyExists(tmp_path).into());
+        }
+
+        let db = Self::open(tmp_path.clone())?;
         step.finish();
 
         let progress = multi_progress();
@@ -147,6 +147,9 @@ impl Database {
                 .insert(serialize(source)?, serialize(targets)?)?;
         }
         step.finish();
+
+        drop(db);
+        std::fs::rename(&tmp_path, &path)?;
 
         Ok(path)
     }
