@@ -29,7 +29,7 @@ impl Databases {
                         Ok(database) => {
                             map.insert(database.lang_code.to_string(), database);
                         }
-                        Err(err) => println!("{}", err),
+                        Err(err) => eprintln!("ERROR: {}", err),
                     }
                 }
             }
@@ -48,7 +48,7 @@ impl Databases {
 
 pub async fn serve(database_dir: &str, listening_port: u16) {
     let databases = Databases::open(database_dir).unwrap_or_else(|e| {
-        eprintln!("{}", e);
+        eprintln!("ERROR: {}", e);
         std::process::exit(1);
     });
 

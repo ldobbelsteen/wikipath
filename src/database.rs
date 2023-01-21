@@ -1,4 +1,7 @@
-use crate::dump::{self, Dump};
+use crate::{
+    dump::{self, Dump},
+    progress::{multi_progress, step_progress},
+};
 use bincode::{deserialize, serialize};
 use error_chain::error_chain;
 use regex::Regex;
@@ -66,31 +69,50 @@ pub struct Database {
 
 impl Database {
     pub fn build(output_dir: &str, dump: &Dump) -> Result<PathBuf> {
+        let step = step_progress("Initializing database".into());
         let name = format!("{}-{}", dump.lang_code, dump.date);
         let path = Path::new(output_dir).join(name);
         if path.exists() {
             return Err(ErrorKind::AlreadyExists(path.display().to_string()).into());
         }
         let db = Self::open(&path)?;
+        step.finish();
 
-        let titles = dump.parse_page_dump_file()?;
-        let redirects = dump.parse_redir_dump_file(&titles)?; // TODO: cleanup
-        let links = dump.parse_link_dump_file(&titles, &redirects)?;
+        let progress = multi_progress();
+        let step = progress.add(step_progress("Parsing page dump".into()));
+        let titles = dump.parse_page_dump_file(progress)?;
+        step.finish();
 
+        let progress = multi_progress();
+        let step = progress.add(step_progress("Parsing redirects dump".into()));
+        let redirects = dump.parse_redir_dump_file(&titles, progress)?;
+        step.finish();
+
+        let progress = multi_progress();
+        let step = progress.add(step_progress("Parsing links dump".into()));
+        let links = dump.parse_link_dump_file(&titles, &redirects, progress)?;
+        step.finish();
+
+        let step = step_progress("Ingesting redirects into database".into());
         for (source, target) in &redirects {
             db.redirects
                 .insert(serialize(source)?, serialize(target)?)?;
         }
+        step.finish();
 
+        let step = step_progress("Ingesting incoming links into database".into());
         for (target, sources) in &links.incoming {
             db.incoming
                 .insert(serialize(target)?, serialize(sources)?)?;
         }
+        step.finish();
 
+        let step = step_progress("Ingesting outgoing links into database".into());
         for (source, targets) in &links.outgoing {
             db.outgoing
                 .insert(serialize(source)?, serialize(targets)?)?;
         }
+        step.finish();
 
         Ok(path)
     }

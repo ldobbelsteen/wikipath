@@ -3,6 +3,7 @@ use clap::{Parser, Subcommand};
 mod build;
 mod database;
 mod dump;
+mod progress;
 mod serve;
 
 #[derive(Parser)]
