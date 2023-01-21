@@ -457,7 +457,7 @@ impl Dump {
         let progress = progress.add(file_progress(path.into(), 0, file_size));
 
         let (proxy, counter) = CounterProxyReader::new(file);
-        let mut reader = BufReader::new(GzDecoder::new(proxy));
+        let mut reader = GzDecoder::new(proxy);
 
         let regex = regex::bytes::Regex::new(regex)?;
         let mut result = Default::default();
