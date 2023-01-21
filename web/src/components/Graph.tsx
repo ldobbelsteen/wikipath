@@ -38,32 +38,32 @@ export const Graph = (props: {
     svg.attr("width", "100%").attr("height", "100%");
     svg.selectAll("*").remove();
 
-    const { paths: graph } = props;
-    if (!graph) return;
-    if (typeof graph === "string") {
-      setText(graph);
+    const { paths } = props;
+    if (!paths) return;
+    if (typeof paths === "string") {
+      setText(paths);
       return;
     }
 
     /** Don't show graph when no paths are found */
-    if (graph.pathCount === 0) {
+    if (paths.pathCount === 0) {
       setText("No path found");
       return;
     }
 
     /** Show message based on graph content */
-    let message = `Found ${graph.pathCount} ${
-      graph.pathCount === 1 ? "path" : "paths"
-    } of degree ${graph.pathLength}`;
-    if (graph.pathCount > graph.paths.length) {
-      message += `. Only ${graph.paths.length} of them are shown below`;
+    let message = `Found ${paths.pathCount} ${
+      paths.pathCount === 1 ? "path" : "paths"
+    } of degree ${paths.pathLength}.`;
+    if (paths.pathCount > paths.paths.length) {
+      message += ` Only ${paths.paths.length} of them are shown below.`;
     }
     setText(message);
 
     /** Extract nodes and links for D3 from the paths */
     const nodes: Node[] = [];
     const links: Link[] = [];
-    graph.paths.forEach((path) => {
+    paths.paths.forEach((path) => {
       let previousNode: Node;
       path.forEach((page, index) => {
         let currentNode = nodes.find((node) => node.id === page.id);
@@ -185,7 +185,7 @@ export const Graph = (props: {
       .attr("target", "_blank")
       .attr(
         "href",
-        (node) => `https://${graph.langCode}.wikipedia.org/wiki/${node.title}`
+        (node) => `https://${paths.langCode}.wikipedia.org/wiki/${node.title}`
       );
 
     /** Represent the nodes as colored circles */
@@ -203,8 +203,8 @@ export const Graph = (props: {
       .text((node) => {
         let text = node.title;
         if (
-          (node.id === graph.source.id && graph.sourceIsRedir) ||
-          (node.id === graph.target.id && graph.targetIsRedir)
+          (node.id === paths.source.id && paths.sourceIsRedir) ||
+          (node.id === paths.target.id && paths.targetIsRedir)
         ) {
           text += " (redirected)";
         }
