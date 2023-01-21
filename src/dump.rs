@@ -1,6 +1,6 @@
 use crate::{
     database::{Links, PageId, Redirects, Titles},
-    progress::{file_progress, multi_progress, step_progress, CountReader},
+    progress::{file_progress, multi_progress, step_progress, CounterProxyReader},
 };
 use data_encoding::HEXLOWER;
 use error_chain::error_chain;
@@ -233,8 +233,8 @@ impl Dump {
     pub fn parse_page_dump_file(&self, progress: MultiProgress) -> Result<Titles> {
         Self::parse_dump_file(
             &self.page_file,
-            r"\(([0-9]{1,10}),0,'(.{1,255}?)',[01],[01],[0-9.]+?,'[0-9]+?',(?:'[0-9]+?'|NULL),[0-9]{1,10},[0-9]{1,10},'wikitext',NULL\)",
-            2048,
+            r"\(([0-9]{1,10}),0,'(.{1,255}?)',[01],[01],0.[0-9]{1,32}?,'[0-9]{14}',(?:'[0-9]{14}'|NULL),[0-9]{1,10},[0-9]{1,10},'wikitext',NULL\)", // https://www.mediawiki.org/wiki/Manual:Page_table
+            1 + 10 + 4 + 255 + 8 + 32 + 2 + 14 + 3 + 14 + 2 + 10 + 1 + 10 + 17,
             &mut [0; 65536],
             |titles: &mut Titles, caps: regex::bytes::Captures| {
                 let id: PageId = {
@@ -288,9 +288,9 @@ impl Dump {
     ) -> Result<Redirects> {
         let redirects = Self::parse_dump_file(
             &self.redir_file,
-            r"\(([0-9]{1,10}),0,'(.{1,255}?)','.{0,32}?','.{0,255}?'\)",
-            1536,
-            &mut [0; 49152],
+            r"\(([0-9]{1,10}),0,'(.{1,255}?)','.{0,32}?','.{0,255}?'\)", // https://www.mediawiki.org/wiki/Manual:Redirect_table
+            1 + 10 + 4 + 255 + 3 + 32 + 3 + 255 + 2,
+            &mut [0; 65536],
             |redirs: &mut Redirects, caps: regex::bytes::Captures| {
                 let source: PageId = {
                     if let Some(m) = caps.get(1) {
@@ -376,9 +376,9 @@ impl Dump {
     ) -> Result<Links> {
         Self::parse_dump_file(
             &self.link_file,
-            r"\(([0-9]{1,10}),0,'(.{1,255}?)',0\)",
-            1024,
-            &mut [0; 32768],
+            r"\(([0-9]{1,10}),0,'(.{1,255}?)',0\)", // https://www.mediawiki.org/wiki/Manual:Pagelinks_table
+            1 + 10 + 4 + 255 + 4,
+            &mut [0; 65536],
             |links: &mut Links, caps: regex::bytes::Captures| {
                 let source: PageId = {
                     if let Some(m) = caps.get(1) {
@@ -456,15 +456,14 @@ impl Dump {
         let file_size = file.metadata()?.len();
         let progress = progress.add(file_progress(path.into(), 0, file_size));
 
-        let (file_proxy, counter) = CountReader::new(file);
-        let gz_decoder = GzDecoder::new(file_proxy);
-        let mut buf_reader = BufReader::new(gz_decoder);
+        let (proxy, counter) = CounterProxyReader::new(file);
+        let mut reader = BufReader::new(GzDecoder::new(proxy));
 
         let regex = regex::bytes::Regex::new(regex)?;
         let mut result = Default::default();
 
         loop {
-            let bytes_read = buf_reader.read(&mut buffer[max_regex_size..])?;
+            let bytes_read = reader.read(&mut buffer[max_regex_size..])?;
             if bytes_read == 0 {
                 break;
             }

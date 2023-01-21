@@ -39,12 +39,12 @@ pub fn file_progress(msg: String, current_bytes: u64, total_bytes: u64) -> Progr
     .with_message(msg)
 }
 
-pub struct CountReader<R: Read> {
+pub struct CounterProxyReader<R: Read> {
     inner_reader: R,
     counter: Arc<RwLock<usize>>,
 }
 
-impl<R: Read> CountReader<R> {
+impl<R: Read> CounterProxyReader<R> {
     pub fn new(inner_reader: R) -> (Self, Arc<RwLock<usize>>) {
         let counter = Arc::new(RwLock::new(0));
         (
@@ -57,7 +57,7 @@ impl<R: Read> CountReader<R> {
     }
 }
 
-impl<R: Read> Read for CountReader<R> {
+impl<R: Read> Read for CounterProxyReader<R> {
     fn read(&mut self, into: &mut [u8]) -> std::io::Result<usize> {
         let res = self.inner_reader.read(into)?;
         *self.counter.write().unwrap() += res;
