@@ -7,12 +7,15 @@ use axum::{
     routing::get,
     Json, Router, Server,
 };
+use error_chain::error_chain;
 use futures::try_join;
 use include_dir::{include_dir, Dir};
 use serde::Deserialize;
 use std::{collections::HashMap, fs, net::SocketAddr, sync::Arc};
 
 static WEB: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/web/dist");
+
+error_chain! {}
 
 struct Databases {
     map: HashMap<String, Database>,
@@ -48,7 +51,7 @@ impl Databases {
 
 pub async fn serve(database_dir: &str, listening_port: u16) {
     let databases = Databases::open(database_dir).unwrap_or_else(|e| {
-        eprintln!("ERROR: {}", e);
+        eprintln!("FATAL: {}", e);
         std::process::exit(1);
     });
 
@@ -58,18 +61,17 @@ pub async fn serve(database_dir: &str, listening_port: u16) {
     }
 
     #[derive(Deserialize)]
-    struct ShortestPath {
-        #[serde(rename = "language")]
-        lang_code: String,
+    struct ShortestPathsQuery {
+        language: String,
         source: PageId,
         target: PageId,
     }
 
     async fn shortest_paths(
         Extension(databases): Extension<Arc<Databases>>,
-        query: Query<ShortestPath>,
+        query: Query<ShortestPathsQuery>,
     ) -> Response {
-        if let Some(database) = databases.select(&query.lang_code) {
+        if let Some(database) = databases.select(&query.language) {
             if let Ok(paths) = database.get_shortest_paths(query.source, query.target) {
                 Json(paths).into_response()
             } else {
@@ -111,13 +113,39 @@ pub async fn serve(database_dir: &str, listening_port: u16) {
     let api = Router::new()
         .route("/api/list_databases", get(list_databases))
         .route("/api/shortest_paths", get(shortest_paths))
-        .fallback(web_files)
-        .layer(Extension(Arc::new(databases)));
+        .layer(Extension(Arc::new(databases)))
+        .fallback(web_files);
 
     let service = api.into_make_service();
-    let socket_v4 = &SocketAddr::from(([0, 0, 0, 0], listening_port));
-    let socket_v6 = &SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], listening_port));
-    let server_v4 = Server::bind(socket_v4).serve(service.clone());
-    let server_v6 = Server::bind(socket_v6).serve(service.clone());
-    try_join!(server_v4, server_v6).unwrap();
+    let ipv4 = SocketAddr::from(([0, 0, 0, 0], listening_port));
+    let ipv6 = SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], listening_port));
+    let server_ipv4 = Server::try_bind(&ipv4).and_then(|s| Ok(s.serve(service.clone())));
+    let server_ipv6 = Server::try_bind(&ipv6).and_then(|s| Ok(s.serve(service.clone())));
+
+    match (server_ipv4, server_ipv6) {
+        (Ok(ipv4), Ok(ipv6)) => {
+            if let Err(e) = try_join!(ipv4, ipv6) {
+                eprintln!("FATAL: {}", e);
+                std::process::exit(1);
+            }
+        }
+        (Ok(ipv4), Err(ipv6)) => {
+            eprintln!("ERROR: could not bind to IPv6 address: {}", ipv6);
+            if let Err(e) = ipv4.await {
+                eprintln!("FATAL: {}", e);
+                std::process::exit(1);
+            }
+        }
+        (Err(ipv4), Ok(ipv6)) => {
+            eprintln!("ERROR: could not bind to IPv4 address: {}", ipv4);
+            if let Err(e) = ipv6.await {
+                eprintln!("FATAL: {}", e);
+                std::process::exit(1);
+            }
+        }
+        (Err(ipv4), Err(ipv6)) => {
+            eprintln!("FATAL: could not bind to IPv4 nor IPv6: {} {}", ipv4, ipv6);
+            std::process::exit(1);
+        }
+    };
 }
