@@ -47,7 +47,7 @@ pub struct Links {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Graph {
+pub struct Paths {
     source: PageId,
     source_is_redir: bool,
     target: PageId,
@@ -181,7 +181,7 @@ impl Database {
         }
     }
 
-    pub fn get_shortest_paths(&self, source: PageId, target: PageId) -> Result<Graph> {
+    pub fn get_shortest_paths(&self, source: PageId, target: PageId) -> Result<Paths> {
         let (source, source_is_redir) = {
             if let Some(new_source) = self.get_redirect(source)? {
                 (new_source, true)
@@ -353,7 +353,7 @@ impl Database {
             total_path_count += forward_path_count * backward_path_count;
         }
 
-        Ok(Graph {
+        Ok(Paths {
             source: source,
             source_is_redir: source_is_redir,
             target: target,

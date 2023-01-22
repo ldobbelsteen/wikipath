@@ -10,53 +10,101 @@ use axum::{
 use error_chain::error_chain;
 use futures::try_join;
 use include_dir::{include_dir, Dir};
+use notify::{
+    event::{CreateKind, ModifyKind, RemoveKind, RenameMode},
+    EventKind, RecursiveMode, Watcher,
+};
 use serde::Deserialize;
-use std::{collections::HashMap, fs, net::SocketAddr, sync::Arc};
+use std::{
+    collections::HashMap,
+    fs,
+    net::SocketAddr,
+    path::Path,
+    sync::{mpsc, Arc, RwLock, RwLockReadGuard},
+};
 
 static WEB: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/web/dist");
 
-error_chain! {}
+error_chain! {
+    foreign_links {
+        Io(std::io::Error);
+        Notify(notify::Error);
+    }
+}
 
+#[derive(Clone)]
 struct Databases {
-    map: HashMap<String, Database>,
+    databases: Arc<RwLock<HashMap<String, Database>>>,
 }
 
 impl Databases {
-    fn open(dir: &str) -> std::io::Result<Self> {
-        let mut map = HashMap::new();
-        for entry in fs::read_dir(dir)? {
-            if let Ok(entry) = entry {
-                let path = entry.path();
-                if path.is_dir() {
-                    match Database::open(path) {
-                        Ok(database) => {
-                            map.insert(database.lang_code.to_string(), database);
+    fn new(dir: &str) -> Result<Self> {
+        fn open(dir: &str) -> Result<HashMap<String, Database>> {
+            let mut result = HashMap::new();
+            for entry in fs::read_dir(dir)? {
+                if let Ok(entry) = entry {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        match Database::open(path) {
+                            Ok(database) => {
+                                result.insert(database.lang_code.to_string(), database);
+                            }
+                            Err(err) => eprintln!("ERROR: {}", err),
                         }
-                        Err(err) => eprintln!("ERROR: {}", err),
                     }
                 }
             }
+            Ok(result)
         }
-        Ok(Self { map: map })
+
+        let result = Self {
+            databases: Arc::new(RwLock::new(open(dir)?)),
+        };
+
+        let (tx, rx) = mpsc::channel();
+        let mut watcher = notify::recommended_watcher(tx)?;
+        watcher.watch(Path::new(&dir), RecursiveMode::NonRecursive)?;
+
+        let databases = result.databases.clone();
+        let dir = dir.to_string();
+
+        std::thread::spawn(move || {
+            watcher.configure(notify::Config::default()).unwrap();
+            for msg in rx {
+                match msg {
+                    Err(e) => eprintln!("ERROR: {}", e),
+                    Ok(event) => {
+                        if event.kind == EventKind::Create(CreateKind::Folder)
+                            || event.kind == EventKind::Remove(RemoveKind::Folder)
+                            || event.kind == EventKind::Modify(ModifyKind::Name(RenameMode::From))
+                        {
+                            println!("INFO: database file change detected, reloading databases...");
+                            let mut lock = databases.write().unwrap();
+                            lock.drain().for_each(|db| drop(db));
+                            *lock = open(&dir).unwrap_or_default();
+                        }
+                    }
+                }
+            }
+        });
+
+        Ok(result)
     }
 
-    fn select(&self, lang_code: &str) -> Option<&Database> {
-        self.map.get(lang_code)
-    }
-
-    fn list(&self) -> Vec<&Database> {
-        self.map.values().collect()
+    fn get(&self) -> RwLockReadGuard<HashMap<String, Database>> {
+        self.databases.read().unwrap()
     }
 }
 
 pub async fn serve(database_dir: &str, listening_port: u16) {
-    let databases = Databases::open(database_dir).unwrap_or_else(|e| {
+    let databases = Databases::new(database_dir).unwrap_or_else(|e| {
         eprintln!("FATAL: {}", e);
         std::process::exit(1);
     });
 
-    async fn list_databases(Extension(databases): Extension<Arc<Databases>>) -> Response {
-        let list = databases.list();
+    async fn list_databases(Extension(databases): Extension<Databases>) -> Response {
+        let databases = databases.get();
+        let list = databases.values().collect::<Vec<&Database>>();
         Json(list).into_response()
     }
 
@@ -68,21 +116,25 @@ pub async fn serve(database_dir: &str, listening_port: u16) {
     }
 
     async fn shortest_paths(
-        Extension(databases): Extension<Arc<Databases>>,
+        Extension(databases): Extension<Databases>,
         query: Query<ShortestPathsQuery>,
     ) -> Response {
-        if let Some(database) = databases.select(&query.language) {
-            if let Ok(paths) = database.get_shortest_paths(query.source, query.target) {
-                Json(paths).into_response()
-            } else {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "unexpected database error",
-                )
-                    .into_response()
+        let databases = databases.get();
+        if let Some(database) = databases.get(&query.language) {
+            match database.get_shortest_paths(query.source, query.target) {
+                Ok(paths) => Json(paths).into_response(),
+                Err(e) => {
+                    let response = (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "unexpected database error",
+                    );
+                    eprintln!("ERROR: {}", e);
+                    response.into_response()
+                }
             }
         } else {
-            return (StatusCode::NOT_FOUND, "language not supported").into_response();
+            let response = (StatusCode::NOT_FOUND, "language not supported");
+            return response.into_response();
         }
     }
 
@@ -96,7 +148,6 @@ pub async fn serve(database_dir: &str, listening_port: u16) {
             }
         };
         let mime_type = mime_guess::from_path(path).first_or_text_plain();
-
         match WEB.get_file(path) {
             None => StatusCode::NOT_FOUND.into_response(),
             Some(file) => Response::builder()
@@ -106,14 +157,14 @@ pub async fn serve(database_dir: &str, listening_port: u16) {
                     HeaderValue::from_str(mime_type.as_ref()).unwrap(),
                 )
                 .body(body::boxed(Full::from(file.contents())))
-                .unwrap(),
+                .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR.into_response()),
         }
     }
 
     let api = Router::new()
         .route("/api/list_databases", get(list_databases))
         .route("/api/shortest_paths", get(shortest_paths))
-        .layer(Extension(Arc::new(databases)))
+        .layer(Extension(databases))
         .fallback(web_files);
 
     let service = api.into_make_service();
