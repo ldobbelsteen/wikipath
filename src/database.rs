@@ -106,7 +106,7 @@ impl Database {
         }
         let tmp_path = Path::new(dir).join(name + tmp_suffix);
         if tmp_path.exists() {
-            return Err(ErrorKind::DatabaseAlreadyExists(tmp_path).into());
+            std::fs::remove_dir_all(tmp_path.clone())?;
         }
 
         let db = Self::open(tmp_path.clone())?;

@@ -1,7 +1,6 @@
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 use lazy_static::lazy_static;
 use std::io::Read;
-use std::sync::{Arc, RwLock};
 
 const REFRESH_RATE: u8 = 3;
 
@@ -39,28 +38,24 @@ pub fn file_progress(msg: String, current_bytes: u64, total_bytes: u64) -> Progr
     .with_message(msg)
 }
 
-pub struct CounterProxyReader<R: Read> {
+pub struct ProgressReader<R: Read> {
     inner_reader: R,
-    counter: Arc<RwLock<usize>>,
+    progress: ProgressBar,
 }
 
-impl<R: Read> CounterProxyReader<R> {
-    pub fn new(inner_reader: R) -> (Self, Arc<RwLock<usize>>) {
-        let counter = Arc::new(RwLock::new(0));
-        (
-            Self {
-                inner_reader: inner_reader,
-                counter: counter.clone(),
-            },
-            counter.clone(),
-        )
+impl<R: Read> ProgressReader<R> {
+    pub fn new(inner_reader: R, progress: ProgressBar) -> Self {
+        Self {
+            inner_reader,
+            progress,
+        }
     }
 }
 
-impl<R: Read> Read for CounterProxyReader<R> {
+impl<R: Read> Read for ProgressReader<R> {
     fn read(&mut self, into: &mut [u8]) -> std::io::Result<usize> {
         let res = self.inner_reader.read(into)?;
-        *self.counter.write().unwrap() += res;
+        self.progress.inc(res as u64);
         Ok(res)
     }
 }
