@@ -1760,6 +1760,7 @@ dependencies = [
  "flate2",
  "futures",
  "futures-util",
+ "hyper",
  "include_dir",
  "indicatif",
  "lazy_static",

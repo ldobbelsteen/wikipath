@@ -38,7 +38,17 @@ async fn main() {
             language,
             databases,
             dumps,
-        } => build::build(&language, &databases, &dumps).await,
-        Action::Serve { databases, port } => serve::serve(&databases, port).await,
+        } => {
+            if let Err(e) = build::build(&language, &databases, &dumps).await {
+                eprintln!("FATAL: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Action::Serve { databases, port } => {
+            if let Err(e) = serve::serve(&databases, port).await {
+                eprintln!("FATAL: {}", e);
+                std::process::exit(1);
+            }
+        }
     }
 }

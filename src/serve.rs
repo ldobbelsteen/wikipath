@@ -29,6 +29,14 @@ error_chain! {
     foreign_links {
         Io(std::io::Error);
         Notify(notify::Error);
+        Hyper(hyper::Error);
+    }
+
+    errors {
+        CouldNotBind(port: u16) {
+            description("could not bind to port")
+            display("could not bind to either ipv4 nor ipv6 on port {}", port)
+        }
     }
 }
 
@@ -96,11 +104,8 @@ impl Databases {
     }
 }
 
-pub async fn serve(database_dir: &str, listening_port: u16) {
-    let databases = Databases::new(database_dir).unwrap_or_else(|e| {
-        eprintln!("FATAL: {}", e);
-        std::process::exit(1);
-    });
+pub async fn serve(database_dir: &str, listening_port: u16) -> Result<()> {
+    let databases = Databases::new(database_dir)?;
 
     async fn list_databases(Extension(databases): Extension<Databases>) -> Response {
         let databases = databases.get();
@@ -175,28 +180,20 @@ pub async fn serve(database_dir: &str, listening_port: u16) {
 
     match (server_ipv4, server_ipv6) {
         (Ok(ipv4), Ok(ipv6)) => {
-            if let Err(e) = try_join!(ipv4, ipv6) {
-                eprintln!("FATAL: {}", e);
-                std::process::exit(1);
-            }
+            try_join!(ipv4, ipv6)?;
         }
         (Ok(ipv4), Err(ipv6)) => {
             eprintln!("ERROR: could not bind to IPv6 address: {}", ipv6);
-            if let Err(e) = ipv4.await {
-                eprintln!("FATAL: {}", e);
-                std::process::exit(1);
-            }
+            ipv4.await?;
         }
         (Err(ipv4), Ok(ipv6)) => {
             eprintln!("ERROR: could not bind to IPv4 address: {}", ipv4);
-            if let Err(e) = ipv6.await {
-                eprintln!("FATAL: {}", e);
-                std::process::exit(1);
-            }
+            ipv6.await?;
         }
-        (Err(ipv4), Err(ipv6)) => {
-            eprintln!("FATAL: could not bind to IPv4 nor IPv6: {} {}", ipv4, ipv6);
-            std::process::exit(1);
+        (Err(_), Err(_)) => {
+            return Err(ErrorKind::CouldNotBind(listening_port).into());
         }
     };
+
+    Ok(())
 }
