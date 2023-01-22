@@ -38,11 +38,7 @@ wikipath build
 
 This command does everything for you; it downloads the latest dumps, parses them and ingests them into a database. This process is extremely optimized, but can still take a long time depending on your machine's processing power and memory. Different Wikipedia languages also have very differing numbers of articles, which also hugely influences the build time.
 
-There is a minimum amount of system memory required in the build process, as part of the dump has to be kept in-memory. To give an example, the English database requires at least around 30GB of memory, meaning you need a system with about 32GB of memory minimum. It is, however, always better to have more memory than necessary, because it relieves GC pressure and thus increases speed.
-
-Also keep in mind that the compressed dump files stay on disk to prevent re-downloads on re-builds and as such will require a minimum free disk space equal to the sum of the `pagelinks.sql.gz`, `page.sql.gz` and `redirect.sql.gz` dumps (approx. 9GB for the English database) on top of the size of the final database (approx. 6GB for the English database).
-
-To give an idea of how long the build process takes; a computer with 6 cores and 32GB of memory takes around 30 minutes (excluding download times) to complete a build of the English Wikipedia.
+There is a minimum amount of system memory required in the build process, as part of the dump has to be kept in-memory. To give an example, the English database requires at least around 32GB of memory. Also keep in mind that the compressed dump files stay on disk to prevent re-downloads on re-builds and as such will require a minimum free disk space equal to the sum of the `pagelinks.sql.gz`, `page.sql.gz` and `redirect.sql.gz` dumps (approx. 10GB for the English database) on top of the size of the final database (approx. 6GB for the English database).
 
 ## Serving
 
