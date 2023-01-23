@@ -16,7 +16,7 @@ error_chain! {
         Io(std::io::Error);
         Sled(sled::Error);
         Dump(dump::Error);
-        Encoding(bincode::Error);
+        Bincode(bincode::Error);
     }
 
     errors {
@@ -163,21 +163,21 @@ impl Database {
         }
     }
 
-    fn get_incoming(&self, id: PageId) -> Result<Option<HashSet<PageId>>> {
+    fn get_incoming(&self, id: PageId) -> Result<HashSet<PageId>> {
         let data = self.incoming.get(serialize(&id)?)?;
         if let Some(data) = data {
-            Ok(Some(deserialize(data.deref())?))
+            Ok(deserialize(data.deref())?)
         } else {
-            Ok(None)
+            Ok(Default::default())
         }
     }
 
-    fn get_outgoing(&self, id: PageId) -> Result<Option<HashSet<PageId>>> {
+    fn get_outgoing(&self, id: PageId) -> Result<HashSet<PageId>> {
         let data = self.outgoing.get(serialize(&id)?)?;
         if let Some(data) = data {
-            Ok(Some(deserialize(data.deref())?))
+            Ok(deserialize(data.deref())?)
         } else {
-            Ok(None)
+            Ok(Default::default())
         }
     }
 
@@ -221,18 +221,16 @@ impl Database {
                         .ok_or(ErrorKind::ShortestPathsAlgo(
                             "empty forward queue".to_string(),
                         ))?;
-                    if let Some(outgoing) = self.get_outgoing(page)? {
-                        for out in outgoing {
-                            if !forward_parents.contains_key(&out) {
-                                forward_queue.push_back(out);
-                                if let Some(set) = new_parents.get_mut(&out) {
-                                    set.insert(page);
-                                } else {
-                                    new_parents.insert(out, HashSet::from([page]));
-                                }
-                                if backward_parents.contains_key(&out) {
-                                    overlapping.insert(out);
-                                }
+                    for out in self.get_outgoing(page)? {
+                        if !forward_parents.contains_key(&out) {
+                            forward_queue.push_back(out);
+                            if let Some(set) = new_parents.get_mut(&out) {
+                                set.insert(page);
+                            } else {
+                                new_parents.insert(out, HashSet::from([page]));
+                            }
+                            if backward_parents.contains_key(&out) {
+                                overlapping.insert(out);
                             }
                         }
                     }
@@ -255,18 +253,16 @@ impl Database {
                         .ok_or(ErrorKind::ShortestPathsAlgo(
                             "empty backward queue".to_string(),
                         ))?;
-                    if let Some(incoming) = self.get_incoming(page)? {
-                        for inc in incoming {
-                            if !backward_parents.contains_key(&inc) {
-                                backward_queue.push_back(inc);
-                                if let Some(parents) = new_parents.get_mut(&inc) {
-                                    parents.insert(page);
-                                } else {
-                                    new_parents.insert(inc, HashSet::from([page]));
-                                }
-                                if forward_parents.contains_key(&inc) {
-                                    overlapping.insert(inc);
-                                }
+                    for inc in self.get_incoming(page)? {
+                        if !backward_parents.contains_key(&inc) {
+                            backward_queue.push_back(inc);
+                            if let Some(parents) = new_parents.get_mut(&inc) {
+                                parents.insert(page);
+                            } else {
+                                new_parents.insert(inc, HashSet::from([page]));
+                            }
+                            if forward_parents.contains_key(&inc) {
+                                overlapping.insert(inc);
                             }
                         }
                     }

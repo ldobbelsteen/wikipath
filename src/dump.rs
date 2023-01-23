@@ -346,7 +346,7 @@ impl Dump {
             progress.clone(),
         )?;
 
-        let mut clean_redirects: HashMap<u32, u32> = HashMap::new();
+        let mut clean_redirects: HashMap<PageId, PageId> = HashMap::new();
         for (source, target) in &redirects {
             let source = *source;
             let mut target = *target;
