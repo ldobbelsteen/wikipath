@@ -25,10 +25,6 @@ error_chain! {
             description("error in shortest paths algorithm")
             display("unexpected error in shortest paths algorithm: {}", msg)
         }
-        DatabaseAlreadyExists(path: PathBuf) {
-            description("database already exists")
-            display("database to build already exists: {}", path.display())
-        }
         InvalidDatabasePath(path: PathBuf, reason: String) {
             description("invalid database path")
             display("database path '{}' is invalid: {}", path.display(), reason)
@@ -108,7 +104,8 @@ impl Database {
         let tmp_suffix = "-tmp";
         let path = Path::new(dir).join(name.clone());
         if path.exists() {
-            return Err(ErrorKind::DatabaseAlreadyExists(path).into());
+            println!("Database already exists, skipping...");
+            return Ok(path);
         }
         let tmp_path = Path::new(dir).join(name + tmp_suffix);
         if tmp_path.exists() {
