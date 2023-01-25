@@ -178,6 +178,7 @@ pub async fn serve(database_dir: &str, listening_port: u16) -> Result<()> {
     let server_ipv4 = Server::try_bind(&ipv4).and_then(|s| Ok(s.serve(service.clone())));
     let server_ipv6 = Server::try_bind(&ipv6).and_then(|s| Ok(s.serve(service.clone())));
 
+    println!("Listening on port {}...", listening_port);
     match (server_ipv4, server_ipv6) {
         (Ok(ipv4), Ok(ipv6)) => {
             try_join!(ipv4, ipv6)?;
