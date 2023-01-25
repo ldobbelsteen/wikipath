@@ -4,10 +4,10 @@ use crate::{
 };
 use bincode::{deserialize, serialize};
 use error_chain::error_chain;
-use serde::Serialize;
 use hashbrown::{HashMap, HashSet};
+use serde::Serialize;
 use std::{
-    collections::{VecDeque},
+    collections::VecDeque,
     ops::Deref,
     path::{Path, PathBuf},
 };
@@ -74,7 +74,12 @@ pub struct Database {
 
 impl Database {
     pub fn open(path: PathBuf) -> Result<Self> {
-        let database = sled::open(&path)?;
+        let database = sled::Config::default()
+            .path(&path)
+            .cache_capacity(4 * 1024 * 1024 * 1024) // 4GB
+            .mode(sled::Mode::LowSpace)
+            .use_compression(true)
+            .open()?;
         let name = path.as_path().file_name().and_then(|s| s.to_str()).ok_or(
             ErrorKind::InvalidDatabasePath(path.clone(), "invalid string".into()),
         )?;

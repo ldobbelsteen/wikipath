@@ -23,5 +23,5 @@ regex = "1.6.0"
 reqwest = { version = "0.11.13", features = ["stream"] }
 ring = "0.16.20"
 serde = { version = "1.0.152", features = ["derive"] }
-sled = "0.34.7"
+sled = { version = "0.34.7", features = ["compression"] }
 tokio = { version = "1.24.1", features = ["full"] }
