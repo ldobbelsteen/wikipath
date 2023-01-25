@@ -9,6 +9,7 @@ use axum::{
 };
 use error_chain::error_chain;
 use futures::try_join;
+use hashbrown::HashMap;
 use include_dir::{include_dir, Dir};
 use notify::{
     event::{CreateKind, ModifyKind, RemoveKind, RenameMode},
@@ -16,7 +17,6 @@ use notify::{
 };
 use serde::Deserialize;
 use std::{
-    collections::HashMap,
     fs,
     net::SocketAddr,
     path::Path,

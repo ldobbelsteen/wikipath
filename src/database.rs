@@ -5,8 +5,9 @@ use crate::{
 use bincode::{deserialize, serialize};
 use error_chain::error_chain;
 use serde::Serialize;
+use hashbrown::{HashMap, HashSet};
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{VecDeque},
     ops::Deref,
     path::{Path, PathBuf},
 };

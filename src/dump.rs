@@ -7,11 +7,11 @@ use error_chain::error_chain;
 use flate2::read::GzDecoder;
 use futures::try_join;
 use futures_util::StreamExt;
+use hashbrown::{HashMap, HashSet};
 use indicatif::MultiProgress;
 use regex::Regex;
 use ring::digest::{Context, SHA1_FOR_LEGACY_USE_ONLY};
 use std::{
-    collections::{HashMap, HashSet},
     fs::File,
     io::{BufReader, Read, Write},
     path::{Path, PathBuf},
@@ -351,7 +351,7 @@ impl Dump {
             let source = *source;
             let mut target = *target;
             if redirects.contains_key(&target) {
-                let mut encountered = HashSet::from([target]);
+                let mut encountered: HashSet<u32> = HashSet::from([target]);
                 while let Some(new_target) = redirects.get(&target) {
                     if encountered.contains(new_target) {
                         break;
