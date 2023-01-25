@@ -12,6 +12,7 @@ error_chain! {
 
 pub async fn build(lang_code: &str, database_dir: &str, dumps_dir: &str) -> Result<()> {
     let start = Instant::now();
+    println!("\nBuilding '{}' database...", lang_code);
     let dump = dump::Dump::download(dumps_dir, lang_code).await?;
     let path = database::Database::build(database_dir, &dump)?;
     println!(
