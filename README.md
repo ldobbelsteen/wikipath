@@ -1,6 +1,6 @@
 # Wikipath
 
-[Wikipath](https://wikipath.dobbel.dev) is a website with which the shortest path between any two Wikipedia articles can be found. The shortest path is the least number of clicks on links necessary to reach a target page from a starting page. The project is heavily inspired by the [Six Degrees of Wikipedia](https://www.sixdegreesofwikipedia.com) project, but aims at better performance and supporting any language. The primary raison d'être of this project is personally learning Rust and web development.
+[Wikipath](https://wikipath.dobbel.dev) is a website with which the shortest path between any two Wikipedia articles can be found. The shortest path is the least number of clicks on links necessary to reach a target page from a starting page. The project is heavily inspired by the [Six Degrees of Wikipedia](https://www.sixdegreesofwikipedia.com) project, but aims at better performance and supporting any language.
 
 ## Building
 
@@ -11,7 +11,7 @@ npm install
 npm run build
 ```
 
-Then to build the backend, go back to the root directory and build by running:
+Then to build the backend, go back to the root directory and build by running (make sure you have `cargo` installed):
 
 ```
 cargo build --release
@@ -37,8 +37,6 @@ wikipath build
 `--language` specifies which Wikipedia language to create a database of. A list of all Wikipedia languages can be found [here](https://en.wikipedia.org/wiki/List_of_Wikipedias). The language should be specified in the language code of the website (e.g. `en` for English, `de` for German, etc.). Defaults to `en`.
 
 This command does everything for you; it downloads the latest dumps, parses them and ingests them into a database. This process is extremely optimized, but can still take a long time depending on your machine's processing power and memory. Different Wikipedia languages also have very differing numbers of articles, which also hugely influences the build time.
-
-There is a minimum amount of system memory required in the build process, as part of the dump has to be kept in-memory. To give an example, the English database requires at least around 32GB of memory. Also keep in mind that the compressed dump files stay on disk to prevent re-downloads on re-builds and as such will require a minimum free disk space equal to the sum of the `pagelinks.sql.gz`, `page.sql.gz` and `redirect.sql.gz` dumps (approx. 10GB for the English database) on top of the size of the final database (approx. 6GB for the English database).
 
 ## Serving
 
