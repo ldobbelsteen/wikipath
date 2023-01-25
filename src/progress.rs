@@ -2,7 +2,7 @@ use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 use lazy_static::lazy_static;
 use std::io::Read;
 
-const REFRESH_RATE: u8 = 3;
+const REFRESH_RATE: u8 = 1;
 
 lazy_static! {
     static ref STEP_STYLE: ProgressStyle =
