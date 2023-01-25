@@ -8,7 +8,7 @@ lazy_static! {
     static ref STEP_STYLE: ProgressStyle =
         ProgressStyle::with_template("[{elapsed_precise}] {msg} {spinner}").unwrap();
     static ref FILE_STYLE: ProgressStyle =
-        ProgressStyle::with_template("{msg} [{bar}] {bytes} / {total_bytes} ({bytes_per_sec})")
+        ProgressStyle::with_template(" ➔  {msg} [{bar}] {percent}% ({bytes_per_sec})")
             .unwrap()
             .progress_chars("##-");
 }
