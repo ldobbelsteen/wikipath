@@ -1,6 +1,6 @@
 use crate::{
     dump::{self, Dump},
-    progress::{multi_progress, step_progress},
+    progress::{multi_progress, spinner, unit_progress},
 };
 use bincode::{deserialize, serialize};
 use error_chain::error_chain;
@@ -99,7 +99,6 @@ impl Database {
     }
 
     pub fn build(dir: &str, dump: &Dump) -> Result<PathBuf> {
-        let step = step_progress("Initializing database".into());
         let name = format!("{}-{}", dump.lang_code, dump.date);
         let tmp_suffix = "-tmp";
         let path = Path::new(dir).join(name.clone());
@@ -113,42 +112,53 @@ impl Database {
         }
 
         let db = Self::open(tmp_path.clone())?;
-        step.finish();
 
         let progress = multi_progress();
-        let step = progress.add(step_progress("Parsing page dump".into()));
+        let step = progress.add(spinner("Parsing page dump".into()));
         let titles = dump.parse_page_dump_file(progress)?;
         step.finish();
 
         let progress = multi_progress();
-        let step = progress.add(step_progress("Parsing redirects dump".into()));
+        let step = progress.add(spinner("Parsing redirects dump".into()));
         let redirects = dump.parse_redir_dump_file(&titles, progress)?;
         step.finish();
 
         let progress = multi_progress();
-        let step = progress.add(step_progress("Parsing links dump".into()));
+        let step = progress.add(spinner("Parsing links dump".into()));
         let links = dump.parse_link_dump_file(&titles, &redirects, progress)?;
         step.finish();
 
-        let step = step_progress("Ingesting redirects into database".into());
+        let progress = multi_progress();
+        let step = progress.add(spinner("Ingesting redirects into database".into()));
+        let bar = progress.add(unit_progress(redirects.len() as u64));
         for (source, target) in &redirects {
             db.redirects
                 .insert(serialize(source)?, serialize(target)?)?;
+            bar.inc(1);
         }
+        bar.finish();
         step.finish();
 
-        let step = step_progress("Ingesting incoming links into database".into());
+        let progress = multi_progress();
+        let step = progress.add(spinner("Ingesting incoming links into database".into()));
+        let bar = progress.add(unit_progress(links.incoming.len() as u64));
         for (target, sources) in &links.incoming {
             db.incoming
                 .insert(serialize(target)?, serialize(sources)?)?;
+            bar.inc(1);
         }
+        bar.finish();
         step.finish();
 
-        let step = step_progress("Ingesting outgoing links into database".into());
+        let progress = multi_progress();
+        let step = progress.add(spinner("Ingesting outgoing links into database".into()));
+        let bar = progress.add(unit_progress(links.outgoing.len() as u64));
         for (source, targets) in &links.outgoing {
             db.outgoing
                 .insert(serialize(source)?, serialize(targets)?)?;
+            bar.inc(1);
         }
+        bar.finish();
         step.finish();
 
         drop(db);

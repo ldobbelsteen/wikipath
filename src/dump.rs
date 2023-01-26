@@ -1,6 +1,6 @@
 use crate::{
     database::{Links, PageId, Redirects, Titles},
-    progress::{file_progress, multi_progress, step_progress, ProgressReader},
+    progress::{byte_progress, multi_progress, spinner, ProgressReader},
 };
 use data_encoding::HEXLOWER;
 use error_chain::error_chain;
@@ -76,12 +76,10 @@ pub struct Dump {
 
 impl Dump {
     pub async fn download(dumps_dir: &str, lang_code: &str) -> Result<Self> {
-        let step = step_progress("Getting latest dump metadata".into());
         let metadata = Self::latest_metadata(lang_code).await?;
-        step.finish();
 
         let progress = multi_progress();
-        let step = progress.add(step_progress("Downloading latest dump".into()));
+        let step = progress.add(spinner("Downloading latest dump".into()));
         let (page, redir, link) = try_join!(
             Self::download_file(dumps_dir, &metadata.page, progress.clone()),
             Self::download_file(dumps_dir, &metadata.redir, progress.clone()),
@@ -90,7 +88,7 @@ impl Dump {
         step.finish();
 
         let progress = multi_progress();
-        let step = progress.add(step_progress("Hashing latest dump".into()));
+        let step = progress.add(spinner("Hashing latest dump".into()));
         let (page, redir, link) = try_join!(
             Self::confirm_hash(page, metadata.page.hash, progress.clone()),
             Self::confirm_hash(redir, metadata.redir.hash, progress.clone()),
@@ -173,7 +171,7 @@ impl Dump {
             .and_then(|h| h.to_str().ok().and_then(|s| s.parse().ok()))
             .ok_or(ErrorKind::MissingContentLength(url.clone()))?;
 
-        let progress = progress.add(file_progress(
+        let progress = progress.add(byte_progress(
             external_file.full_name.clone(),
             existing_bytes,
             total_bytes,
@@ -206,7 +204,7 @@ impl Dump {
         let mut context = Context::new(&SHA1_FOR_LEGACY_USE_ONLY);
         let mut buffer = [0; 2048];
 
-        let progress = progress.add(file_progress(
+        let progress = progress.add(byte_progress(
             format!("{}", path.display()),
             0,
             file.metadata()?.len(),
@@ -450,7 +448,7 @@ impl Dump {
     {
         let file = File::open(path)?;
         let file_size = file.metadata()?.len();
-        let progress = progress.add(file_progress(path.into(), 0, file_size));
+        let progress = progress.add(byte_progress("".into(), 0, file_size));
         let mut reader = GzDecoder::new(ProgressReader::new(file, progress.clone()));
         let mut buffer = [0; 65536];
 

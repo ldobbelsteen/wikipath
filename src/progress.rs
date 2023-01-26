@@ -5,10 +5,14 @@ use std::io::Read;
 const REFRESH_RATE: u8 = 1;
 
 lazy_static! {
-    static ref STEP_STYLE: ProgressStyle =
+    static ref SPINNER_STYLE: ProgressStyle =
         ProgressStyle::with_template("[{elapsed_precise}] {msg} {spinner}").unwrap();
-    static ref FILE_STYLE: ProgressStyle =
-        ProgressStyle::with_template(" ➔  {msg} [{bar}] {percent}% ({bytes_per_sec})")
+    static ref BYTE_STYLE: ProgressStyle =
+        ProgressStyle::with_template(" ➔  [{bar}] {percent}% ({bytes_per_sec})")
+            .unwrap()
+            .progress_chars("##-");
+    static ref UNIT_STYLE: ProgressStyle =
+        ProgressStyle::with_template(" ➔  [{bar}] {percent}% ({per_sec})")
             .unwrap()
             .progress_chars("##-");
 }
@@ -17,9 +21,9 @@ pub fn multi_progress() -> MultiProgress {
     MultiProgress::with_draw_target(ProgressDrawTarget::stderr_with_hz(REFRESH_RATE))
 }
 
-pub fn step_progress(msg: String) -> ProgressBar {
+pub fn spinner(msg: String) -> ProgressBar {
     let step = ProgressBar::new_spinner()
-        .with_style(STEP_STYLE.clone())
+        .with_style(SPINNER_STYLE.clone())
         .with_message(msg);
     step.set_draw_target(ProgressDrawTarget::stderr_with_hz(REFRESH_RATE));
     step.enable_steady_tick(std::time::Duration::from_millis(
@@ -28,14 +32,22 @@ pub fn step_progress(msg: String) -> ProgressBar {
     step
 }
 
-pub fn file_progress(msg: String, current_bytes: u64, total_bytes: u64) -> ProgressBar {
+pub fn byte_progress(msg: String, current_bytes: u64, total_bytes: u64) -> ProgressBar {
     ProgressBar::with_draw_target(
         Some(total_bytes),
         ProgressDrawTarget::stderr_with_hz(REFRESH_RATE),
     )
     .with_position(current_bytes)
-    .with_style(FILE_STYLE.clone())
+    .with_style(BYTE_STYLE.clone())
     .with_message(msg)
+}
+
+pub fn unit_progress(total: u64) -> ProgressBar {
+    ProgressBar::with_draw_target(
+        Some(total),
+        ProgressDrawTarget::stderr_with_hz(REFRESH_RATE),
+    )
+    .with_style(UNIT_STYLE.clone())
 }
 
 pub struct ProgressReader<R: Read> {
