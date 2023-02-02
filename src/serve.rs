@@ -1,4 +1,7 @@
-use crate::database::{Database, PageId};
+use crate::{
+    database::{Connection, PageId},
+    dump::Metadata,
+};
 use axum::{
     body::{self, Full},
     extract::{Extension, Query},
@@ -19,7 +22,7 @@ use serde::Deserialize;
 use std::{
     fs,
     net::SocketAddr,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{mpsc, Arc, RwLock, RwLockReadGuard},
 };
 
@@ -27,37 +30,40 @@ static WEB: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/web/dist");
 
 error_chain! {
     foreign_links {
-        Io(std::io::Error);
         Notify(notify::Error);
         Hyper(hyper::Error);
     }
 
     errors {
-        CouldNotBind(port: u16) {
-            description("could not bind to port")
-            display("could not bind to either ipv4 nor ipv6 on port {}", port)
+        SocketBindError(port: u16) {
+            display("could bind to neither ipv4 nor ipv6 on port {}", port)
         }
     }
 }
 
 #[derive(Clone)]
 struct Databases {
-    databases: Arc<RwLock<HashMap<String, Database>>>,
+    databases: Arc<RwLock<HashMap<String, Connection>>>,
 }
 
 impl Databases {
-    fn new(dir: &str) -> Result<Self> {
-        fn open(dir: &str) -> Result<HashMap<String, Database>> {
+    fn new(dir: &PathBuf) -> Result<Self> {
+        fn open(dir: &PathBuf) -> Result<HashMap<String, Connection>> {
             let mut result = HashMap::new();
-            for entry in fs::read_dir(dir)? {
-                if let Ok(entry) = entry {
-                    let path = entry.path();
-                    if path.is_dir() {
-                        match Database::open(path) {
-                            Ok(database) => {
-                                result.insert(database.lang_code.to_string(), database);
+            if let Ok(entries) = fs::read_dir(dir) {
+                for entry in entries {
+                    if let Ok(entry) = entry {
+                        let path = entry.path();
+                        if path.is_dir() {
+                            match Connection::open(&path) {
+                                Ok(database) => {
+                                    result.insert(
+                                        database.metadata.language_code.to_string(),
+                                        database,
+                                    );
+                                }
+                                Err(err) => eprintln!("ERROR: {}", err),
                             }
-                            Err(err) => eprintln!("ERROR: {}", err),
                         }
                     }
                 }
@@ -74,7 +80,7 @@ impl Databases {
         watcher.watch(Path::new(&dir), RecursiveMode::NonRecursive)?;
 
         let databases = result.databases.clone();
-        let dir = dir.to_string();
+        let dir = dir.clone();
 
         std::thread::spawn(move || {
             watcher.configure(notify::Config::default()).unwrap();
@@ -99,17 +105,20 @@ impl Databases {
         Ok(result)
     }
 
-    fn get(&self) -> RwLockReadGuard<HashMap<String, Database>> {
+    fn get(&self) -> RwLockReadGuard<HashMap<String, Connection>> {
         self.databases.read().unwrap()
     }
 }
 
-pub async fn serve(database_dir: &str, listening_port: u16) -> Result<()> {
-    let databases = Databases::new(database_dir)?;
+pub async fn serve(databases_dir: &PathBuf, listening_port: u16) -> Result<()> {
+    let databases = Databases::new(databases_dir)?;
 
     async fn list_databases(Extension(databases): Extension<Databases>) -> Response {
         let databases = databases.get();
-        let list = databases.values().collect::<Vec<&Database>>();
+        let list = databases
+            .values()
+            .map(|db| &db.metadata)
+            .collect::<Vec<&Metadata>>();
         Json(list).into_response()
     }
 
@@ -192,7 +201,7 @@ pub async fn serve(database_dir: &str, listening_port: u16) -> Result<()> {
             ipv6.await?;
         }
         (Err(_), Err(_)) => {
-            return Err(ErrorKind::CouldNotBind(listening_port).into());
+            return Err(ErrorKind::SocketBindError(listening_port).into());
         }
     };
 

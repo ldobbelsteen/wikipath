@@ -54,7 +54,7 @@ export const Graph = (props: {
     /** Show message based on graph content */
     let message = `Found ${paths.pathCount} ${
       paths.pathCount === 1 ? "path" : "paths"
-    } of degree ${paths.pathLength}.`;
+    } of degree ${paths.pathLengths}.`;
     if (paths.pathCount > paths.paths.length) {
       message += ` Only ${paths.paths.length} of them are shown below.`;
     }
@@ -185,7 +185,8 @@ export const Graph = (props: {
       .attr("target", "_blank")
       .attr(
         "href",
-        (node) => `https://${paths.langCode}.wikipedia.org/wiki/${node.title}`
+        (node) =>
+          `https://${paths.languageCode}.wikipedia.org/wiki/${node.title}`
       );
 
     /** Represent the nodes as colored circles */
@@ -203,8 +204,8 @@ export const Graph = (props: {
       .text((node) => {
         let text = node.title;
         if (
-          (node.id === paths.source.id && paths.sourceIsRedir) ||
-          (node.id === paths.target.id && paths.targetIsRedir)
+          (node.id === paths.source.id && paths.sourceIsRedirect) ||
+          (node.id === paths.target.id && paths.targetIsRedirect)
         ) {
           text += " (redirected)";
         }

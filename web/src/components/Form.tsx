@@ -6,9 +6,9 @@ import { Search } from "./Search";
 
 export const Form = (props: {
   disabled: boolean;
-  submit: (langCode: string, source: number, target: number) => void;
+  submit: (languageCode: string, source: number, target: number) => void;
 }) => {
-  const [langCode, setlangCode] = useState<string>();
+  const [languageCode, setLanguageCode] = useState<string>();
 
   const [sourceInput, setSourceInput] = useState("");
   const [targetInput, setTargetInput] = useState("");
@@ -27,7 +27,7 @@ export const Form = (props: {
     setSourceInput("");
     setTargetPage(undefined);
     setTargetInput("");
-  }, [langCode]);
+  }, [languageCode]);
 
   /** Remove invalid error on input change */
   useEffect(() => {
@@ -54,10 +54,10 @@ export const Form = (props: {
     if (ready) {
       setSourceInvalid(!sourcePage);
       setTargetInvalid(!targetPage);
-      if (langCode && sourcePage && targetPage) {
+      if (languageCode && sourcePage && targetPage) {
         setSourceInput(sourcePage.title);
         setTargetInput(targetPage.title);
-        props.submit(langCode, sourcePage.id, targetPage.id);
+        props.submit(languageCode, sourcePage.id, targetPage.id);
       }
     }
   }
@@ -75,13 +75,13 @@ export const Form = (props: {
       <div className="flex justify-center items-center flex-wrap">
         <Language
           disabled={props.disabled}
-          selectedlangCode={langCode}
-          setSelectedlangCode={setlangCode}
+          selectedLanguageCode={languageCode}
+          setSelectedLanguageCode={setLanguageCode}
         />
         <Search
           input={sourceInput}
           invalid={sourceInvalid}
-          langCode={langCode}
+          languageCode={languageCode}
           disabled={props.disabled}
           placeholder={"Starting page"}
           setReady={setSourceReady}
@@ -99,7 +99,7 @@ export const Form = (props: {
         <Search
           input={targetInput}
           invalid={targetInvalid}
-          langCode={langCode}
+          languageCode={languageCode}
           disabled={props.disabled}
           placeholder={"End page"}
           setReady={setTargetReady}

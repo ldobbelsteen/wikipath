@@ -9,9 +9,13 @@ import { Graph } from "./Graph";
 const App = () => {
   const [paths, setPaths] = useState<Paths | string | undefined>("");
 
-  const submitForm = (langCode: string, sourceId: number, targetId: number) => {
+  const submitForm = (
+    languageCode: string,
+    sourceId: number,
+    targetId: number
+  ) => {
     setPaths(undefined);
-    HTTP.shortestPaths(langCode, sourceId, targetId)
+    HTTP.shortestPaths(languageCode, sourceId, targetId)
       .then(setPaths)
       .catch((err) => {
         toast.error("An unexpected error occurred while getting your graph :(");

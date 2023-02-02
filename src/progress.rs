@@ -15,6 +15,8 @@ lazy_static! {
         ProgressStyle::with_template(" ➔  [{bar}] {percent}% ({per_sec})")
             .unwrap()
             .progress_chars("##-");
+    static ref SUBSPINNER_STYLE: ProgressStyle =
+        ProgressStyle::with_template(" ➔  {msg} {spinner}").unwrap();
 }
 
 pub fn multi_progress() -> MultiProgress {
@@ -24,6 +26,17 @@ pub fn multi_progress() -> MultiProgress {
 pub fn spinner(msg: String) -> ProgressBar {
     let step = ProgressBar::new_spinner()
         .with_style(SPINNER_STYLE.clone())
+        .with_message(msg);
+    step.set_draw_target(ProgressDrawTarget::stderr_with_hz(REFRESH_RATE));
+    step.enable_steady_tick(std::time::Duration::from_millis(
+        (1000.0 / (REFRESH_RATE as f64)).floor() as u64,
+    ));
+    step
+}
+
+pub fn subspinner(msg: String) -> ProgressBar {
+    let step = ProgressBar::new_spinner()
+        .with_style(SUBSPINNER_STYLE.clone())
         .with_message(msg);
     step.set_draw_target(ProgressDrawTarget::stderr_with_hz(REFRESH_RATE));
     step.enable_steady_tick(std::time::Duration::from_millis(

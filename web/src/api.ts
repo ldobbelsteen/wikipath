@@ -35,42 +35,42 @@ export abstract class HTTP {
   };
 
   static shortestPaths = (
-    langCode: string,
+    languageCode: string,
     sourceId: number,
     targetId: number
   ) => {
-    const url = `/api/shortest_paths?language=${langCode}&source=${sourceId}&target=${targetId}`;
+    const url = `/api/shortest_paths?language=${languageCode}&source=${sourceId}&target=${targetId}`;
     return this.get(url, Schema.Paths);
   };
 
-  static randomPage = (langCode: string) => {
-    const url = `https://${langCode}.wikipedia.org/w/api.php?origin=*&action=query&format=json&list=random&rnnamespace=0&rnlimit=1`;
+  static randomPage = (languageCode: string) => {
+    const url = `https://${languageCode}.wikipedia.org/w/api.php?origin=*&action=query&format=json&list=random&rnnamespace=0&rnlimit=1`;
     return this.get(url, Schema.WikipediaRandom);
   };
 
   static pageTitles = async (
-    langCode: string,
+    languageCode: string,
     pageIds: number[]
   ): Promise<Record<number, string>> => {
     if (pageIds.length > 50) {
       const left = pageIds.slice(0, 50);
       const right = pageIds.slice(50);
-      const leftResult = await this.pageTitles(langCode, left);
-      const rightResult = await this.pageTitles(langCode, right);
+      const leftResult = await this.pageTitles(languageCode, left);
+      const rightResult = await this.pageTitles(languageCode, right);
       return Promise.resolve(Object.assign({}, leftResult, rightResult));
     }
     const delimitedPages = pageIds.join("|");
-    const url = `https://${langCode}.wikipedia.org/w/api.php?origin=*&action=query&format=json&pageids=${delimitedPages}`;
+    const url = `https://${languageCode}.wikipedia.org/w/api.php?origin=*&action=query&format=json&pageids=${delimitedPages}`;
     return this.get(url, Schema.WikipediaTitles);
   };
 
   static suggestions = (
-    langCode: string,
+    languageCode: string,
     searchString: string,
     resultLimit: number,
     abort: AbortSignal
   ) => {
-    const url = `https://${langCode}.wikipedia.org/w/api.php?origin=*&action=query&list=prefixsearch&pslimit=${resultLimit}&pssearch=${searchString}&format=json`;
+    const url = `https://${languageCode}.wikipedia.org/w/api.php?origin=*&action=query&list=prefixsearch&pslimit=${resultLimit}&pssearch=${searchString}&format=json`;
     return this.get(url, Schema.WikipediaSearch, abort);
   };
 }
@@ -89,17 +89,17 @@ export abstract class Schema {
   });
 
   static Database = z.object({
-    langCode: z.string().min(1),
+    languageCode: z.string().min(1),
     dumpDate: z.string().min(1),
   });
 
   static Paths = z
     .object({
       source: this.Id,
-      sourceIsRedir: z.boolean(),
+      sourceIsRedirect: z.boolean(),
       target: this.Id,
-      targetIsRedir: z.boolean(),
-      langCode: z.string().min(1),
+      targetIsRedirect: z.boolean(),
+      languageCode: z.string().min(1),
       links: z.record(
         z
           .string()
@@ -107,7 +107,7 @@ export abstract class Schema {
           .transform((s) => parseInt(s)),
         z.array(this.Id)
       ),
-      pathLength: z.number().int().nonnegative(),
+      pathLengths: z.number().int().nonnegative(),
       pathCount: z.number().int().nonnegative(),
     })
     .transform(
@@ -115,29 +115,29 @@ export abstract class Schema {
         graph
       ): Promise<{
         source: Page;
-        sourceIsRedir: boolean;
+        sourceIsRedirect: boolean;
         target: Page;
-        targetIsRedir: boolean;
-        langCode: string;
+        targetIsRedirect: boolean;
+        languageCode: string;
         paths: Page[][];
-        pathLength: number;
+        pathLengths: number;
         pathCount: number;
       }> => {
         const rawPaths = this.extractPaths(graph, 8);
         const titles = await HTTP.pageTitles(
-          graph.langCode,
+          graph.languageCode,
           flattenUnique(rawPaths)
         );
         const idToPage = (id: number) => ({ id: id, title: titles[id] });
         const paths = rawPaths.map((path) => path.map(idToPage));
         return {
           source: idToPage(graph.source),
-          sourceIsRedir: graph.sourceIsRedir,
+          sourceIsRedirect: graph.sourceIsRedirect,
           target: idToPage(graph.target),
-          targetIsRedir: graph.targetIsRedir,
-          langCode: graph.langCode,
+          targetIsRedirect: graph.targetIsRedirect,
+          languageCode: graph.languageCode,
           paths: paths,
-          pathLength: graph.pathLength,
+          pathLengths: graph.pathLengths,
           pathCount: graph.pathCount,
         };
       }

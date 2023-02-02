@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use std::path::PathBuf;
 
 mod build;
 mod database;
@@ -46,15 +47,18 @@ async fn main() {
             databases,
             dumps,
         } => {
+            let databases_dir = PathBuf::from(databases);
+            let dumps_dir = PathBuf::from(dumps);
             for language in language.split(",") {
-                if let Err(e) = build::build(&language, &databases, &dumps).await {
+                if let Err(e) = build::build(&language, &databases_dir, &dumps_dir).await {
                     eprintln!("FATAL: {}", e);
                     std::process::exit(1);
                 }
             }
         }
         Action::Serve { databases, port } => {
-            if let Err(e) = serve::serve(&databases, port).await {
+            let databases_dir = PathBuf::from(databases);
+            if let Err(e) = serve::serve(&databases_dir, port).await {
                 eprintln!("FATAL: {}", e);
                 std::process::exit(1);
             }

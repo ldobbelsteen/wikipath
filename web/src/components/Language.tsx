@@ -4,10 +4,10 @@ import { Database, HTTP } from "../api";
 
 export const Language = (props: {
   disabled: boolean;
-  selectedlangCode: string | undefined;
-  setSelectedlangCode: (code: string | undefined) => void;
+  selectedLanguageCode: string | undefined;
+  setSelectedLanguageCode: (code: string | undefined) => void;
 }) => {
-  const { setSelectedlangCode } = props;
+  const { setSelectedLanguageCode } = props;
 
   const [isLoading, setIsLoading] = useState(true);
   const [databases, setDatabases] = useState<Database[]>();
@@ -22,12 +22,15 @@ export const Language = (props: {
         setDatabases(databases);
         for (const language of navigator.languages) {
           const supported = databases.find((database) =>
-            database.langCode.includes(language.substring(0, 2))
+            database.languageCode.includes(language.substring(0, 2))
           );
           if (supported) {
-            setSelectedlangCode(supported.langCode);
-            break;
+            setSelectedLanguageCode(supported.languageCode);
+            return null;
           }
+        }
+        if (databases.length > 0) {
+          setSelectedLanguageCode(databases[0].languageCode);
         }
         return null;
       })
@@ -38,29 +41,29 @@ export const Language = (props: {
         );
         console.error(err);
       });
-  }, [setSelectedlangCode]);
+  }, [setSelectedLanguageCode]);
 
   return (
     <select
       className="m-1 p-2"
       value={
         databases?.find(
-          (database) => database.langCode === props.selectedlangCode
-        )?.langCode
+          (database) => database.languageCode === props.selectedLanguageCode
+        )?.languageCode
       }
       disabled={props.disabled || isLoading}
       onChange={(ev) => {
         const database = databases?.find(
-          (database) => database.langCode === ev.target.value
+          (database) => database.languageCode === ev.target.value
         );
         if (database) {
-          setSelectedlangCode(database.langCode);
+          setSelectedLanguageCode(database.languageCode);
         }
       }}
     >
       {databases?.map((database, index) => (
-        <option key={index} value={database.langCode}>
-          {database.langCode}
+        <option key={index} value={database.languageCode}>
+          {database.languageCode}
         </option>
       ))}
     </select>

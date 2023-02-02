@@ -1,210 +1,110 @@
-use crate::{
-    dump::{self, Dump},
-    progress::{multi_progress, spinner, unit_progress},
+use super::builder::{
+    PageId, INCOMING_FILENAME, INCOMING_INDEX_FILENAME, METADATA_FILENAME, OUTGOING_FILENAME,
+    OUTGOING_INDEX_FILENAME, REDIRECTS_FILENAME,
 };
-use bincode::{deserialize, serialize};
+use crate::dump::Metadata;
+use bincode::deserialize_from;
 use error_chain::error_chain;
 use hashbrown::{HashMap, HashSet};
 use serde::Serialize;
 use std::{
     collections::VecDeque,
-    ops::Deref,
-    path::{Path, PathBuf},
+    fs::File,
+    io::{Read, Seek, SeekFrom},
+    mem::size_of,
+    path::PathBuf,
+    sync::{Arc, Mutex},
 };
 
 error_chain! {
     foreign_links {
         Io(std::io::Error);
-        Sled(sled::Error);
-        Dump(dump::Error);
         Bincode(bincode::Error);
     }
 
     errors {
-        ShortestPathsAlgo(msg: String) {
-            description("error in shortest paths algorithm")
-            display("unexpected error in shortest paths algorithm: {}", msg)
+        Algorithm(msg: String) {
+            display("unexpected error in DFS algorithm: {}", msg)
         }
-        InvalidDatabasePath(path: PathBuf, reason: String) {
-            description("invalid database path")
-            display("database path '{}' is invalid: {}", path.display(), reason)
+        MissingMetadata(path: PathBuf) {
+            display("database at '{}' is missing metadata", path.display())
         }
     }
-}
-
-pub type PageId = u32;
-pub type Titles = HashMap<String, PageId>;
-pub type Redirects = HashMap<PageId, PageId>;
-
-#[derive(Debug, Default)]
-pub struct Links {
-    pub incoming: HashMap<PageId, HashSet<PageId>>,
-    pub outgoing: HashMap<PageId, HashSet<PageId>>,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Paths {
     source: PageId,
-    source_is_redir: bool,
+    source_is_redirect: bool,
     target: PageId,
-    target_is_redir: bool,
-    lang_code: String,
+    target_is_redirect: bool,
     links: HashMap<PageId, HashSet<PageId>>,
-    path_length: u32,
+    language_code: String,
+    dump_date: String,
+    path_lengths: u32,
     path_count: u32,
 }
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Database {
-    #[serde(skip)]
-    incoming: sled::Tree,
-    #[serde(skip)]
-    outgoing: sled::Tree,
-    #[serde(skip)]
-    redirects: sled::Tree,
-    pub lang_code: String,
-    pub dump_date: String,
+#[derive(Debug)]
+pub struct Connection {
+    incoming: Arc<Mutex<File>>,
+    incoming_index: HashMap<PageId, (u64, u64)>,
+    outgoing: Arc<Mutex<File>>,
+    outgoing_index: HashMap<PageId, (u64, u64)>,
+    redirects: HashMap<PageId, PageId>,
+    pub metadata: Metadata,
 }
 
-impl Database {
-    pub fn open(path: PathBuf) -> Result<Self> {
-        let database = sled::Config::default()
-            .path(&path)
-            .cache_capacity(4 * 1024 * 1024 * 1024) // 4GB
-            .mode(sled::Mode::LowSpace)
-            .use_compression(true)
-            .open()?;
-        let name = path.as_path().file_name().and_then(|s| s.to_str()).ok_or(
-            ErrorKind::InvalidDatabasePath(path.clone(), "invalid string".into()),
-        )?;
-        let mut parts = name.split("-");
-        let lang_code = parts.next().ok_or(ErrorKind::InvalidDatabasePath(
-            path.clone(),
-            "no language code included".into(),
-        ))?;
-        let dump_date = parts.next().ok_or(ErrorKind::InvalidDatabasePath(
-            path.clone(),
-            "no dump date included".into(),
-        ))?;
-
-        Ok(Database {
-            incoming: database.open_tree("incoming")?,
-            outgoing: database.open_tree("outgoing")?,
-            redirects: database.open_tree("redirects")?,
-            lang_code: lang_code.to_string(),
-            dump_date: dump_date.to_string(),
+impl Connection {
+    pub fn open(path: &PathBuf) -> Result<Self> {
+        Ok(Self {
+            incoming: Arc::new(Mutex::new(File::open(path.join(INCOMING_FILENAME))?)),
+            incoming_index: deserialize_from(File::open(path.join(INCOMING_INDEX_FILENAME))?)?,
+            outgoing: Arc::new(Mutex::new(File::open(path.join(OUTGOING_FILENAME))?)),
+            outgoing_index: deserialize_from(File::open(path.join(OUTGOING_INDEX_FILENAME))?)?,
+            redirects: deserialize_from(File::open(path.join(REDIRECTS_FILENAME))?)?,
+            metadata: deserialize_from(File::open(path.join(METADATA_FILENAME))?)?,
         })
     }
 
-    pub fn build(dir: &str, dump: &Dump) -> Result<PathBuf> {
-        let name = format!("{}-{}", dump.lang_code, dump.date);
-        let tmp_suffix = "-tmp";
-        let path = Path::new(dir).join(name.clone());
-        if path.exists() {
-            println!("Database already exists, skipping...");
-            return Ok(path);
-        }
-        let tmp_path = Path::new(dir).join(name + tmp_suffix);
-        if tmp_path.exists() {
-            std::fs::remove_dir_all(tmp_path.clone())?;
-        }
-
-        let db = Self::open(tmp_path.clone())?;
-
-        let progress = multi_progress();
-        let step = progress.add(spinner("Parsing page dump".into()));
-        let titles = dump.parse_page_dump_file(progress)?;
-        step.finish();
-
-        let progress = multi_progress();
-        let step = progress.add(spinner("Parsing redirects dump".into()));
-        let redirects = dump.parse_redir_dump_file(&titles, progress)?;
-        step.finish();
-
-        let progress = multi_progress();
-        let step = progress.add(spinner("Parsing links dump".into()));
-        let links = dump.parse_link_dump_file(&titles, &redirects, progress)?;
-        step.finish();
-
-        let progress = multi_progress();
-        let step = progress.add(spinner("Ingesting redirects into database".into()));
-        let bar = progress.add(unit_progress(redirects.len() as u64));
-        for (source, target) in &redirects {
-            db.redirects
-                .insert(serialize(source)?, serialize(target)?)?;
-            bar.inc(1);
-        }
-        bar.finish();
-        step.finish();
-
-        let progress = multi_progress();
-        let step = progress.add(spinner("Ingesting incoming links into database".into()));
-        let bar = progress.add(unit_progress(links.incoming.len() as u64));
-        for (target, sources) in &links.incoming {
-            db.incoming
-                .insert(serialize(target)?, serialize(sources)?)?;
-            bar.inc(1);
-        }
-        bar.finish();
-        step.finish();
-
-        let progress = multi_progress();
-        let step = progress.add(spinner("Ingesting outgoing links into database".into()));
-        let bar = progress.add(unit_progress(links.outgoing.len() as u64));
-        for (source, targets) in &links.outgoing {
-            db.outgoing
-                .insert(serialize(source)?, serialize(targets)?)?;
-            bar.inc(1);
-        }
-        bar.finish();
-        step.finish();
-
-        drop(db);
-        std::fs::rename(&tmp_path, &path)?;
-
-        Ok(path)
+    fn get_redirect(&self, id: PageId) -> Option<PageId> {
+        self.redirects.get(&id).copied()
     }
 
-    fn get_redirect(&self, id: PageId) -> Result<Option<PageId>> {
-        let data = self.redirects.get(serialize(&id)?)?;
-        if let Some(data) = data {
-            Ok(Some(deserialize(data.deref())?))
+    fn get_links(&self, incoming: bool, id: PageId) -> Result<Vec<PageId>> {
+        let (file, index) = if incoming {
+            (&self.incoming, &self.incoming_index)
         } else {
-            Ok(None)
-        }
-    }
+            (&self.outgoing, &self.outgoing_index)
+        };
 
-    fn get_incoming(&self, id: PageId) -> Result<HashSet<PageId>> {
-        let data = self.incoming.get(serialize(&id)?)?;
-        if let Some(data) = data {
-            Ok(deserialize(data.deref())?)
-        } else {
-            Ok(Default::default())
-        }
-    }
-
-    fn get_outgoing(&self, id: PageId) -> Result<HashSet<PageId>> {
-        let data = self.outgoing.get(serialize(&id)?)?;
-        if let Some(data) = data {
-            Ok(deserialize(data.deref())?)
+        if let Some(index) = index.get(&id) {
+            let mut file = file.lock().unwrap();
+            file.seek(SeekFrom::Start(index.0))?;
+            let mut result = Vec::with_capacity(index.1 as usize);
+            for _ in 0..index.1 {
+                let mut buffer = [0; size_of::<PageId>()];
+                file.read_exact(&mut buffer)?;
+                result.push(PageId::from_le_bytes(buffer));
+            }
+            Ok(result)
         } else {
             Ok(Default::default())
         }
     }
 
     pub fn get_shortest_paths(&self, source: PageId, target: PageId) -> Result<Paths> {
-        let (source, source_is_redir) = {
-            if let Some(new_source) = self.get_redirect(source)? {
+        let (source, source_is_redirect) = {
+            if let Some(new_source) = self.get_redirect(source) {
                 (new_source, true)
             } else {
                 (source, false)
             }
         };
 
-        let (target, target_is_redir) = {
-            if let Some(new_target) = self.get_redirect(target)? {
+        let (target, target_is_redirect) = {
+            if let Some(new_target) = self.get_redirect(target) {
                 (new_target, true)
             } else {
                 (target, false)
@@ -231,10 +131,8 @@ impl Database {
                 for _ in 0..forward_queue.len() {
                     let page = forward_queue
                         .pop_front()
-                        .ok_or(ErrorKind::ShortestPathsAlgo(
-                            "empty forward queue".to_string(),
-                        ))?;
-                    for out in self.get_outgoing(page)? {
+                        .ok_or(ErrorKind::Algorithm("empty forward queue".to_string()))?;
+                    for out in self.get_links(false, page)? {
                         if !forward_parents.contains_key(&out) {
                             forward_queue.push_back(out);
                             if let Some(set) = new_parents.get_mut(&out) {
@@ -263,10 +161,8 @@ impl Database {
                 for _ in 0..backward_queue.len() {
                     let page = backward_queue
                         .pop_front()
-                        .ok_or(ErrorKind::ShortestPathsAlgo(
-                            "empty backward queue".to_string(),
-                        ))?;
-                    for inc in self.get_incoming(page)? {
+                        .ok_or(ErrorKind::Algorithm("empty backward queue".to_string()))?;
+                    for inc in self.get_links(true, page)? {
                         if !backward_parents.contains_key(&inc) {
                             backward_queue.push_back(inc);
                             if let Some(parents) = new_parents.get_mut(&inc) {
@@ -332,9 +228,9 @@ impl Database {
                             *counts.entry(page).or_default() += parent_count;
                         }
                     }
-                    return Ok(*counts.get(&page).ok_or(ErrorKind::ShortestPathsAlgo(
-                        "unmemoized path count".to_string(),
-                    ))?);
+                    return Ok(*counts
+                        .get(&page)
+                        .ok_or(ErrorKind::Algorithm("unmemoized path count".to_string()))?);
                 }
             }
             Ok(1)
@@ -364,12 +260,13 @@ impl Database {
 
         Ok(Paths {
             source: source,
-            source_is_redir: source_is_redir,
+            source_is_redirect,
             target: target,
-            target_is_redir: target_is_redir,
-            lang_code: self.lang_code.to_string(),
+            target_is_redirect: target_is_redirect,
             links: links,
-            path_length: if total_path_count != 0 {
+            language_code: self.metadata.language_code.clone(),
+            dump_date: self.metadata.dump_date.clone(),
+            path_lengths: if total_path_count != 0 {
                 forward_depth + backward_depth
             } else {
                 0

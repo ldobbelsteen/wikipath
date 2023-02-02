@@ -9,7 +9,7 @@ import { Suggest } from "./Suggest";
 export const Search = (props: {
   input: string;
   invalid: boolean;
-  langCode?: string;
+  languageCode?: string;
   disabled: boolean;
   placeholder: string;
   setReady: (v: boolean) => void;
@@ -20,7 +20,7 @@ export const Search = (props: {
   const suggestionsFetch = useRef(new AbortController());
   const [loadingRandom, setLoadingRandom] = useState(false);
 
-  const { setReady, setPage, langCode, setInput } = props;
+  const { setReady, setPage, languageCode, setInput } = props;
 
   const clearSuggestions = useCallback(() => {
     suggestionsFetch.current.abort();
@@ -29,12 +29,12 @@ export const Search = (props: {
 
   const fetchSuggestions = useCallback(
     (search: string) => {
-      if (!langCode) return;
+      if (!languageCode) return;
       setReady(false);
       suggestionsFetch.current.abort();
       const controller = new AbortController();
       suggestionsFetch.current = controller;
-      HTTP.suggestions(langCode, search, 5, controller.signal)
+      HTTP.suggestions(languageCode, search, 5, controller.signal)
         .then((suggestions) => {
           setSuggestions(suggestions);
           setPage(
@@ -54,14 +54,14 @@ export const Search = (props: {
           }
         });
     },
-    [clearSuggestions, langCode, setPage, setReady]
+    [clearSuggestions, languageCode, setPage, setReady]
   );
 
   const randomPage = useCallback(() => {
-    if (!langCode) return;
+    if (!languageCode) return;
     setReady(false);
     setLoadingRandom(true);
-    HTTP.randomPage(langCode)
+    HTTP.randomPage(languageCode)
       .then((page) => {
         setInput(page.title);
         setPage(page);
@@ -76,7 +76,7 @@ export const Search = (props: {
         toast.error("An unexpected error occurred while a random page :(");
         console.error(err);
       });
-  }, [langCode, setInput, setPage, setReady]);
+  }, [languageCode, setInput, setPage, setReady]);
 
   return (
     <div className="relative">
@@ -84,7 +84,7 @@ export const Search = (props: {
         input={props.input}
         setInput={props.setInput}
         placeholder={props.placeholder}
-        disabled={props.disabled || !props.langCode}
+        disabled={props.disabled || !props.languageCode}
         invalid={props.invalid}
         suggestions={suggestions}
         suggestionToString={(s) => s.title}
@@ -97,7 +97,7 @@ export const Search = (props: {
         type="image"
         src={loadingRandom ? Loading : Dice}
         alt="Get random page"
-        disabled={props.disabled || loadingRandom || !props.langCode}
+        disabled={props.disabled || loadingRandom || !props.languageCode}
         onClick={randomPage}
       />
     </div>

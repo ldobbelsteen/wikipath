@@ -1,239 +1,85 @@
+use super::Dump;
 use crate::{
-    database::{Links, PageId, Redirects, Titles},
-    progress::{byte_progress, multi_progress, spinner, ProgressReader},
+    database::PageId,
+    progress::{byte_progress, ProgressReader},
 };
-use data_encoding::HEXLOWER;
 use error_chain::error_chain;
 use flate2::read::GzDecoder;
-use futures::try_join;
-use futures_util::StreamExt;
 use hashbrown::{HashMap, HashSet};
 use indicatif::MultiProgress;
-use regex::Regex;
-use ring::digest::{Context, SHA1_FOR_LEGACY_USE_ONLY};
-use std::{
-    fs::File,
-    io::{BufReader, Read, Write},
-    path::{Path, PathBuf},
-    str::from_utf8,
-};
+use std::{fs::File, io::Read, path::PathBuf, str::from_utf8};
 
 error_chain! {
     foreign_links {
         Io(std::io::Error);
-        Http(reqwest::Error);
         Regex(regex::Error);
         Utf8(std::str::Utf8Error);
     }
 
     errors {
-        HashMismatch(file: PathBuf, digest: String, target: String) {
-            description("hash mismatch")
-            display("expected hash of '{}' to be '{}', but was '{}'", file.display(), target, digest)
-        }
         InvalidPageId(id: String) {
-            description("invalid page id")
             display("invalid page id '{}'", id)
         }
         PageIdTooLarge(id: String) {
-            description("page id too large")
             display("page id is too large '{}'", id)
-        }
-        MissingDumpType(dump: String) {
-            description("missing dump type")
-            display("missing dump type '{}'", dump)
-        }
-        MissingContentLength(url: String) {
-            description("mising content length")
-            display("missing content length header for '{}'", url)
         }
     }
 }
 
-#[derive(Debug)]
-struct ExternalDumpFile {
-    full_name: String,
-    lang_code: String,
-    date: String,
-    hash: String,
-}
-
-#[derive(Debug)]
-struct ExternalDump {
-    page: ExternalDumpFile,
-    redir: ExternalDumpFile,
-    link: ExternalDumpFile,
-}
-
-#[derive(Debug)]
-pub struct Dump {
-    page_file: String,
-    redir_file: String,
-    link_file: String,
-    pub lang_code: String,
-    pub date: String,
+#[derive(Debug, Default)]
+pub struct Links {
+    pub incoming: HashMap<PageId, HashSet<PageId>>,
+    pub outgoing: HashMap<PageId, HashSet<PageId>>,
 }
 
 impl Dump {
-    pub async fn download(dumps_dir: &str, lang_code: &str) -> Result<Self> {
-        let metadata = Self::latest_metadata(lang_code).await?;
-
-        let progress = multi_progress();
-        let step = progress.add(spinner("Downloading latest dump".into()));
-        let (page, redir, link) = try_join!(
-            Self::download_file(dumps_dir, &metadata.page, progress.clone()),
-            Self::download_file(dumps_dir, &metadata.redir, progress.clone()),
-            Self::download_file(dumps_dir, &metadata.link, progress.clone())
-        )?;
-        step.finish();
-
-        let progress = multi_progress();
-        let step = progress.add(spinner("Hashing latest dump".into()));
-        let (page, redir, link) = try_join!(
-            Self::confirm_hash(page, metadata.page.hash, progress.clone()),
-            Self::confirm_hash(redir, metadata.redir.hash, progress.clone()),
-            Self::confirm_hash(link, metadata.link.hash, progress.clone())
-        )?;
-        step.finish();
-
-        Ok(Self {
-            page_file: page.display().to_string(),
-            redir_file: redir.display().to_string(),
-            link_file: link.display().to_string(),
-            lang_code: metadata.page.lang_code,
-            date: metadata.page.date,
-        })
-    }
-
-    async fn latest_metadata(lang_code: &str) -> Result<ExternalDump> {
-        fn find_hash(hashes: &str, re: Regex) -> Option<ExternalDumpFile> {
-            hashes
-                .lines()
-                .find(|line| re.is_match(line))
-                .and_then(|line| {
-                    let caps = re.captures(line)?;
-                    Some(ExternalDumpFile {
-                        full_name: caps.get(2)?.as_str().to_string(),
-                        lang_code: caps.get(3)?.as_str().to_string(),
-                        date: caps.get(4)?.as_str().to_string(),
-                        hash: caps.get(1)?.as_str().to_string(),
-                    })
-                })
-        }
-
-        let url = format!(
-            "https://dumps.wikimedia.org/{}wiki/latest/{}wiki-latest-sha1sums.txt",
-            lang_code, lang_code
-        );
-        let resp = reqwest::get(url).await?;
-        let hashes = resp.text().await?;
-
-        let base = |n: &str| format!(r"([0-9a-f]{{40}})  ((.+)wiki-([0-9]{{8}})-{}.sql.gz)", n);
-        let page = find_hash(&hashes, Regex::new(&base("page"))?)
-            .ok_or(ErrorKind::MissingDumpType("page".to_string()))?;
-        let redir = find_hash(&hashes, Regex::new(&base("redirect"))?)
-            .ok_or(ErrorKind::MissingDumpType("redirect".to_string()))?;
-        let link = find_hash(&hashes, Regex::new(&base("pagelinks"))?)
-            .ok_or(ErrorKind::MissingDumpType("pagelinks".to_string()))?;
-
-        Ok(ExternalDump {
-            page: page,
-            redir: redir,
-            link: link,
-        })
-    }
-
-    async fn download_file(
-        dumps_dir: &str,
-        external_file: &ExternalDumpFile,
+    pub fn regex_dump<T: Default, U>(
+        path: &PathBuf,
+        raw_regex: &str,
+        max_regex_size: usize,
+        extract_and_store: U,
         progress: MultiProgress,
-    ) -> Result<PathBuf> {
-        let target = Path::new(dumps_dir).join(&external_file.full_name);
-        let mut file = {
-            if target.exists() {
-                File::options().append(true).open(&target)
-            } else {
-                File::create(&target)
-            }
-        }?;
+    ) -> Result<T>
+    where
+        U: Fn(&mut T, regex::bytes::Captures) -> Result<()>,
+    {
+        let file = File::open(path)?;
+        let file_size = file.metadata()?.len();
+        let progress = progress.add(byte_progress("".into(), 0, file_size));
+        let mut reader = GzDecoder::new(ProgressReader::new(file, progress.clone()));
+        let mut buffer = [0; 65536];
 
-        let client = reqwest::Client::new();
-        let url = format!(
-            "https://dumps.wikimedia.org/{}wiki/{}/{}",
-            external_file.lang_code, external_file.date, external_file.full_name,
-        );
-
-        let head_resp = client.head(&url).send().await?;
-        let existing_bytes = file.metadata()?.len();
-        let total_bytes = head_resp
-            .headers()
-            .get(reqwest::header::CONTENT_LENGTH)
-            .and_then(|h| h.to_str().ok().and_then(|s| s.parse().ok()))
-            .ok_or(ErrorKind::MissingContentLength(url.clone()))?;
-
-        let progress = progress.add(byte_progress(
-            external_file.full_name.clone(),
-            existing_bytes,
-            total_bytes,
-        ));
-
-        if existing_bytes < total_bytes {
-            let resp = client
-                .get(&url)
-                .header(reqwest::header::RANGE, format!("bytes={}-", existing_bytes))
-                .send()
-                .await?;
-
-            let mut stream = resp.bytes_stream();
-            while let Some(chunk) = stream.next().await {
-                let chunk = chunk?;
-                file.write_all(&chunk)?;
-                progress.inc(chunk.len() as u64);
-            }
-            file.flush()?;
-        }
-
-        progress.finish();
-
-        Ok(target)
-    }
-
-    async fn confirm_hash(path: PathBuf, hash: String, progress: MultiProgress) -> Result<PathBuf> {
-        let file = File::open(&path)?;
-        let mut reader = BufReader::new(&file);
-        let mut context = Context::new(&SHA1_FOR_LEGACY_USE_ONLY);
-        let mut buffer = [0; 2048];
-
-        let progress = progress.add(byte_progress(
-            format!("{}", path.display()),
-            0,
-            file.metadata()?.len(),
-        ));
+        let regex = regex::bytes::Regex::new(raw_regex)?;
+        let mut result = Default::default();
 
         loop {
-            let count = reader.read(&mut buffer)?;
-            if count == 0 {
+            let bytes_read = reader.read(&mut buffer[max_regex_size..])?;
+            if bytes_read == 0 {
                 break;
             }
-            progress.inc(count as u64);
-            context.update(&buffer[..count]);
+            for caps in regex.captures_iter(&buffer[..max_regex_size + bytes_read]) {
+                match extract_and_store(&mut result, caps) {
+                    Err(Error(ErrorKind::PageIdTooLarge(_), _)) => {}
+                    Err(e) => return Err(e),
+                    Ok(_) => {}
+                }
+            }
+            if bytes_read >= max_regex_size {
+                let (dst, src) = buffer.split_at_mut(bytes_read);
+                dst[..max_regex_size].copy_from_slice(&src[..max_regex_size]);
+            }
         }
 
         progress.finish();
-        let digest = HEXLOWER.encode(context.finish().as_ref());
-        if digest != hash {
-            Err(ErrorKind::HashMismatch(path.clone(), digest, hash).into())
-        } else {
-            Ok(path)
-        }
+        Ok(result)
     }
 
-    pub fn parse_page_dump_file(&self, progress: MultiProgress) -> Result<Titles> {
+    pub fn parse_page_dump_file(&self, progress: MultiProgress) -> Result<HashMap<String, PageId>> {
         Self::regex_dump(
-            &self.page_file,
+            &self.pages,
             r"\(([0-9]{1,10}),0,'(.{1,255}?)',[01],[01],0.[0-9]{1,32}?,'[0-9]{14}',(?:'[0-9]{14}'|NULL),[0-9]{1,10},[0-9]{1,10},'wikitext',NULL\)", // https://www.mediawiki.org/wiki/Manual:Page_table
             1 + 10 + 4 + 255 + 8 + 32 + 2 + 14 + 3 + 14 + 2 + 10 + 1 + 10 + 17,
-            |titles: &mut Titles, caps: regex::bytes::Captures| {
+            |titles: &mut HashMap<String, PageId>, caps: regex::bytes::Captures| {
                 let id: PageId = {
                     if let Some(m) = caps.get(1) {
                         let raw = from_utf8(m.as_bytes())?;
@@ -280,14 +126,14 @@ impl Dump {
 
     pub fn parse_redir_dump_file(
         &self,
-        titles: &Titles,
+        titles: &HashMap<String, PageId>,
         progress: MultiProgress,
-    ) -> Result<Redirects> {
+    ) -> Result<HashMap<PageId, PageId>> {
         let redirects = Self::regex_dump(
-            &self.redir_file,
+            &self.redirects,
             r"\(([0-9]{1,10}),0,'(.{1,255}?)','.{0,32}?','.{0,255}?'\)", // https://www.mediawiki.org/wiki/Manual:Redirect_table
             1 + 10 + 4 + 255 + 3 + 32 + 3 + 255 + 2,
-            |redirs: &mut Redirects, caps: regex::bytes::Captures| {
+            |redirs: &mut HashMap<PageId, PageId>, caps: regex::bytes::Captures| {
                 let source: PageId = {
                     if let Some(m) = caps.get(1) {
                         let raw = from_utf8(m.as_bytes())?;
@@ -349,7 +195,7 @@ impl Dump {
             let source = *source;
             let mut target = *target;
             if redirects.contains_key(&target) {
-                let mut encountered: HashSet<u32> = HashSet::from([target]);
+                let mut encountered: HashSet<PageId> = HashSet::from([target]);
                 while let Some(new_target) = redirects.get(&target) {
                     if encountered.contains(new_target) {
                         break;
@@ -366,12 +212,12 @@ impl Dump {
 
     pub fn parse_link_dump_file(
         &self,
-        titles: &Titles,
-        redirs: &Redirects,
+        titles: &HashMap<String, PageId>,
+        redirs: &HashMap<PageId, PageId>,
         progress: MultiProgress,
     ) -> Result<Links> {
         Self::regex_dump(
-            &self.link_file,
+            &self.pagelinks,
             r"\(([0-9]{1,10}),0,'(.{1,255}?)',0\)", // https://www.mediawiki.org/wiki/Manual:Pagelinks_table
             1 + 10 + 4 + 255 + 4,
             |links: &mut Links, caps: regex::bytes::Captures| {
@@ -434,46 +280,5 @@ impl Dump {
             },
             progress.clone(),
         )
-    }
-
-    fn regex_dump<T: Default, U>(
-        path: &str,
-        raw_regex: &str,
-        max_regex_size: usize,
-        extract_and_store: U,
-        progress: MultiProgress,
-    ) -> Result<T>
-    where
-        U: Fn(&mut T, regex::bytes::Captures) -> Result<()>,
-    {
-        let file = File::open(path)?;
-        let file_size = file.metadata()?.len();
-        let progress = progress.add(byte_progress("".into(), 0, file_size));
-        let mut reader = GzDecoder::new(ProgressReader::new(file, progress.clone()));
-        let mut buffer = [0; 65536];
-
-        let regex = regex::bytes::Regex::new(raw_regex)?;
-        let mut result = Default::default();
-
-        loop {
-            let bytes_read = reader.read(&mut buffer[max_regex_size..])?;
-            if bytes_read == 0 {
-                break;
-            }
-            for caps in regex.captures_iter(&buffer[..max_regex_size + bytes_read]) {
-                match extract_and_store(&mut result, caps) {
-                    Err(Error(ErrorKind::PageIdTooLarge(_), _)) => {}
-                    Err(e) => return Err(e),
-                    Ok(_) => {}
-                }
-            }
-            if bytes_read >= max_regex_size {
-                let (dst, src) = buffer.split_at_mut(bytes_read);
-                dst[..max_regex_size].copy_from_slice(&src[..max_regex_size]);
-            }
-        }
-
-        progress.finish();
-        Ok(result)
     }
 }
