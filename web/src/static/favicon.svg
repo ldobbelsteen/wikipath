@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512">
+    <defs>
+        <linearGradient id="gradient">
+            <stop offset="5%" stop-color="#ffe21f" />
+            <stop offset="95%" stop-color="#ff4429" />
+        </linearGradient>
+    </defs>
+    <path
+        d="M 16 96 L 128 416 L 176 416 L 256 192 L 336 416 L 384 416 L 496 96 L 436 96 L 360 320 L 280 96 L 232 96 L 152 320 L 76 96 L 16 96 L 128 416"
+        stroke="#e6e6e6" stroke-width="4" fill="url(#gradient)" />
+</svg>
