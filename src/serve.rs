@@ -22,7 +22,7 @@ use serde::Deserialize;
 use std::{
     fs,
     net::SocketAddr,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{mpsc, Arc, RwLock, RwLockReadGuard},
 };
 
@@ -49,11 +49,11 @@ struct Databases {
 }
 
 impl Databases {
-    fn new(dir: &PathBuf, cache_capacity: u64) -> Result<Self> {
+    fn new(dir: &Path, cache_capacity: u64) -> Result<Self> {
         let result = Self {
-            directory: dir.clone(),
+            directory: dir.to_path_buf(),
             connections: Arc::new(RwLock::new(HashMap::new())),
-            cache_capacity: cache_capacity,
+            cache_capacity,
         };
         result.update();
         result.spawn_watcher()?;
@@ -90,7 +90,7 @@ impl Databases {
         let mut connections = self.connections.write().unwrap();
         connections.drain().for_each(|(_, c)| drop(c));
         if let Ok(entries) = fs::read_dir(&self.directory) {
-            for entry in entries {
+            entries.for_each(|entry| {
                 if let Ok(entry) = entry {
                     let path = entry.path();
                     if path.is_dir() {
@@ -103,7 +103,7 @@ impl Databases {
                         }
                     }
                 }
-            }
+            });
         }
         println!("[INFO] finished loading databases...");
     }
@@ -113,11 +113,7 @@ impl Databases {
     }
 }
 
-pub async fn serve(
-    databases_dir: &PathBuf,
-    listening_port: u16,
-    cache_capacity: u64,
-) -> Result<()> {
+pub async fn serve(databases_dir: &Path, listening_port: u16, cache_capacity: u64) -> Result<()> {
     let databases = Databases::new(databases_dir, cache_capacity)?;
 
     async fn list_databases(Extension(databases): Extension<Databases>) -> Response {
@@ -155,7 +151,7 @@ pub async fn serve(
             }
         } else {
             let response = (StatusCode::NOT_FOUND, "language not supported");
-            return response.into_response();
+            response.into_response()
         }
     }
 
@@ -165,21 +161,23 @@ pub async fn serve(
             if raw_path == "/" {
                 "index.html"
             } else {
-                raw_path.trim_start_matches("/")
+                raw_path.trim_start_matches('/')
             }
         };
         let mime_type = mime_guess::from_path(path).first_or_text_plain();
-        match WEB.get_file(path) {
-            None => StatusCode::NOT_FOUND.into_response(),
-            Some(file) => Response::builder()
-                .status(StatusCode::OK)
-                .header(
-                    header::CONTENT_TYPE,
-                    HeaderValue::from_str(mime_type.as_ref()).unwrap(),
-                )
-                .body(body::boxed(Full::from(file.contents())))
-                .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR.into_response()),
-        }
+        WEB.get_file(path).map_or_else(
+            || StatusCode::NOT_FOUND.into_response(),
+            |file| {
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header(
+                        header::CONTENT_TYPE,
+                        HeaderValue::from_str(mime_type.as_ref()).unwrap(),
+                    )
+                    .body(body::boxed(Full::from(file.contents())))
+                    .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+            },
+        )
     }
 
     let api = Router::new()
@@ -191,8 +189,8 @@ pub async fn serve(
     let service = api.into_make_service();
     let ipv4 = SocketAddr::from(([0, 0, 0, 0], listening_port));
     let ipv6 = SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], listening_port));
-    let server_ipv4 = Server::try_bind(&ipv4).and_then(|s| Ok(s.serve(service.clone())));
-    let server_ipv6 = Server::try_bind(&ipv6).and_then(|s| Ok(s.serve(service.clone())));
+    let server_ipv4 = Server::try_bind(&ipv4).map(|s| s.serve(service.clone()));
+    let server_ipv6 = Server::try_bind(&ipv6).map(|s| s.serve(service.clone()));
 
     println!("[INFO] listening on port {}...", listening_port);
     match (server_ipv4, server_ipv6) {

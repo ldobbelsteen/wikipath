@@ -1,7 +1,10 @@
 use crate::{database, dump};
 use error_chain::error_chain;
 use indicatif::{HumanBytes, HumanDuration};
-use std::{path::PathBuf, time::Instant};
+use std::{
+    path::{Path, PathBuf},
+    time::Instant,
+};
 
 error_chain! {
     foreign_links {
@@ -12,7 +15,7 @@ error_chain! {
 
 pub async fn build(
     language_code: &str,
-    databases_dir: &PathBuf,
+    databases_dir: &Path,
     dumps_dir: &PathBuf,
     cache_capacity: u64,
     thread_count: usize,

@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File},
     io::{self, BufReader, Read, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     str,
 };
 
@@ -88,17 +88,17 @@ impl Dump {
             &hashes,
             Regex::new(r"([0-9a-f]{40})  ((.+)wiki-([0-9]{8})-page.sql.gz)").unwrap(),
         )
-        .ok_or(ErrorKind::MissingDumpType("page".to_string()))?;
+        .ok_or_else(|| ErrorKind::MissingDumpType("page".to_string()))?;
         let redir = find_hash(
             &hashes,
             Regex::new(r"([0-9a-f]{40})  ((.+)wiki-([0-9]{8})-redirect.sql.gz)").unwrap(),
         )
-        .ok_or(ErrorKind::MissingDumpType("redirect".to_string()))?;
+        .ok_or_else(|| ErrorKind::MissingDumpType("redirect".to_string()))?;
         let link = find_hash(
             &hashes,
             Regex::new(r"([0-9a-f]{40})  ((.+)wiki-([0-9]{8})-pagelinks.sql.gz)").unwrap(),
         )
-        .ok_or(ErrorKind::MissingDumpType("pagelinks".to_string()))?;
+        .ok_or_else(|| ErrorKind::MissingDumpType("pagelinks".to_string()))?;
 
         Ok(Metadata {
             dump_date: page.dump_date.to_string(),
@@ -110,18 +110,18 @@ impl Dump {
     }
 
     pub async fn download(dumps_dir: &PathBuf, metadata: Metadata) -> Result<Self> {
-        fs::create_dir_all(&dumps_dir)?;
+        fs::create_dir_all(dumps_dir)?;
 
         let progress = MultiProgress::new();
-        let step = progress.add(progress::spinner("Downloading latest dump".into()));
+        let step = progress.add(progress::spinner("Downloading latest dump"));
         let (pages, redirects, pagelinks) = try_join!(
-            Self::download_file(&dumps_dir, &metadata.pages, progress.clone()),
-            Self::download_file(&dumps_dir, &metadata.redirects, progress.clone()),
-            Self::download_file(&dumps_dir, &metadata.pagelinks, progress.clone())
+            Self::download_file(dumps_dir, &metadata.pages, progress.clone()),
+            Self::download_file(dumps_dir, &metadata.redirects, progress.clone()),
+            Self::download_file(dumps_dir, &metadata.pagelinks, progress.clone())
         )?;
         step.finish();
 
-        let step = progress.add(progress::spinner("Hashing latest dump".into()));
+        let step = progress.add(progress::spinner("Hashing latest dump"));
         try_join!(
             Self::confirm_hash(&pages, &metadata.pages.hash, progress.clone()),
             Self::confirm_hash(&redirects, &metadata.redirects.hash, progress.clone()),
@@ -138,7 +138,7 @@ impl Dump {
     }
 
     async fn download_file(
-        dumps_dir: &PathBuf,
+        dumps_dir: &Path,
         external_file: &ExternalFile,
         progress: MultiProgress,
     ) -> Result<PathBuf> {
@@ -163,7 +163,7 @@ impl Dump {
             .headers()
             .get(reqwest::header::CONTENT_LENGTH)
             .and_then(|h| h.to_str().ok().and_then(|s| s.parse().ok()))
-            .ok_or(ErrorKind::MissingContentLength(url.clone()))?;
+            .ok_or_else(|| ErrorKind::MissingContentLength(url.clone()))?;
 
         let bar = progress.add(progress::byte(
             &external_file.full_name,
@@ -193,7 +193,7 @@ impl Dump {
     }
 
     async fn confirm_hash(path: &PathBuf, hash: &str, progress: MultiProgress) -> Result<()> {
-        let file = File::open(&path)?;
+        let file = File::open(path)?;
         let mut reader = BufReader::new(&file);
         let mut context = digest::Context::new(&digest::SHA1_FOR_LEGACY_USE_ONLY);
         let mut buffer = [0; 8192];

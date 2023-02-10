@@ -20,6 +20,12 @@ error_chain! {
     }
 }
 
+#[derive(Default)]
+pub struct Links {
+    pub incoming: HashMap<PageId, HashSet<PageId>>,
+    pub outgoing: HashMap<PageId, HashSet<PageId>>,
+}
+
 impl Dump {
     pub fn parse_dump_file<T, U, F, G>(
         path: PathBuf,
@@ -55,7 +61,7 @@ impl Dump {
             let reader = thread::spawn(move || {
                 let file = File::open(path)?;
                 let file_size = file.metadata()?.len();
-                let bar = progress.add(progress::byte("".into(), 0, file_size));
+                let bar = progress.add(progress::byte("", 0, file_size));
                 let mut reader = GzDecoder::new(progress::Reader::new(file, bar.clone()));
                 let chunk_count = parser_count * 2;
                 let chunk_size = 8192;
@@ -378,10 +384,7 @@ impl Dump {
         titles: Arc<HashMap<String, PageId>>,
         redirects: Arc<HashMap<PageId, PageId>>,
         progress: MultiProgress,
-    ) -> Result<(
-        HashMap<PageId, HashSet<PageId>>,
-        HashMap<PageId, HashSet<PageId>>,
-    )> {
+    ) -> Result<Links> {
         let mc = progress.clone();
         Self::parse_dump_file(
             self.pagelinks.clone(),
@@ -476,13 +479,9 @@ impl Dump {
                     None
                 }
             },
-            |links: &mut (
-                HashMap<PageId, HashSet<PageId>>,
-                HashMap<PageId, HashSet<PageId>>,
-            ),
-             link: (PageId, PageId)| {
-                links.0.entry(link.1).or_default().insert(link.0);
-                links.1.entry(link.0).or_default().insert(link.1);
+            |links: &mut Links, link: (PageId, PageId)| {
+                links.incoming.entry(link.1).or_default().insert(link.0);
+                links.outgoing.entry(link.0).or_default().insert(link.1);
             },
             mc,
             thread_count,

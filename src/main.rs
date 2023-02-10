@@ -62,17 +62,18 @@ async fn main() {
         } => {
             let databases_dir = PathBuf::from(databases);
             let dumps_dir = PathBuf::from(dumps);
-            let cache_capacity = if let Some(cache) = cache {
-                cache * 1024 * 1024 * 1024
-            } else {
-                let mut sys = System::new();
-                sys.refresh_memory();
-                sys.total_memory() / 2
-            };
-            let thread_count = threads.unwrap_or_else(|| num_cpus::get());
-            for language in language.split(",") {
+            let cache_capacity = cache.map_or_else(
+                || {
+                    let mut sys = System::new();
+                    sys.refresh_memory();
+                    sys.total_memory() / 2
+                },
+                |cache| cache * 1024 * 1024 * 1024,
+            );
+            let thread_count = threads.unwrap_or_else(num_cpus::get);
+            for language in language.split(',') {
                 if let Err(e) = build::build(
-                    &language,
+                    language,
                     &databases_dir,
                     &dumps_dir,
                     cache_capacity,

@@ -2,7 +2,6 @@ use crate::{
     dump::{self, Metadata},
     parse, progress,
 };
-use bincode;
 use error_chain::error_chain;
 use hashbrown::{HashMap, HashSet};
 use indicatif::MultiProgress;
@@ -70,15 +69,15 @@ impl Database {
         let metadata = bincode::deserialize(
             &root
                 .get(METADATA_KEY)?
-                .ok_or(ErrorKind::MissingMetadata(path.clone()))?,
+                .ok_or_else(|| ErrorKind::MissingMetadata(path.clone()))?,
         )?;
 
         Ok(Self {
             incoming: root.open_tree(INCOMING_TREE_NAME)?,
             outgoing: root.open_tree(OUTGOING_TREE_NAME)?,
             redirects: root.open_tree(REDIRECTS_TREE_NAME)?,
-            metadata: metadata,
-            root: root,
+            metadata,
+            root,
         })
     }
 
@@ -99,44 +98,40 @@ impl Database {
             outgoing: root.open_tree(OUTGOING_TREE_NAME)?,
             redirects: root.open_tree(REDIRECTS_TREE_NAME)?,
             metadata: dump.metadata.clone(),
-            root: root,
+            root,
         };
 
         let progress = MultiProgress::new();
 
-        let step = progress.add(progress::spinner("Parsing page dump".into()));
+        let step = progress.add(progress::spinner("Parsing page dump"));
         let titles = Arc::new(dump.parse_page_dump_file(thread_count, progress.clone())?);
         step.finish();
 
-        let step = progress.add(progress::spinner("Parsing redirects dump".into()));
+        let step = progress.add(progress::spinner("Parsing redirects dump"));
         let redirects =
             Arc::new(dump.parse_redir_dump_file(thread_count, titles.clone(), progress.clone())?);
         step.finish();
 
-        let step = progress.add(progress::spinner("Parsing links dump".into()));
+        let step = progress.add(progress::spinner("Parsing links dump"));
         let links =
             dump.parse_link_dump_file(thread_count, titles, redirects.clone(), progress.clone())?;
         step.finish();
 
-        let step = progress.add(progress::spinner(
-            "Ingesting redirects into database".into(),
-        ));
+        let step = progress.add(progress::spinner("Ingesting redirects into database"));
         let bar = progress.add(progress::unit(redirects.len() as u64));
         for (source, target) in redirects.as_ref() {
             db.redirects
-                .insert(&source.to_le_bytes(), &target.to_le_bytes())?;
+                .insert(source.to_le_bytes(), &target.to_le_bytes())?;
             bar.inc(1);
         }
         bar.finish();
         step.finish();
 
-        let step = progress.add(progress::spinner(
-            "Ingesting incoming links into database".into(),
-        ));
-        let bar = progress.add(progress::unit(links.0.len() as u64));
-        for (target, sources) in links.0 {
+        let step = progress.add(progress::spinner("Ingesting incoming links into database"));
+        let bar = progress.add(progress::unit(links.incoming.len() as u64));
+        for (target, sources) in links.incoming {
             db.incoming.insert(
-                &target.to_le_bytes(),
+                target.to_le_bytes(),
                 sources
                     .iter()
                     .flat_map(|id| id.to_le_bytes())
@@ -147,13 +142,11 @@ impl Database {
         bar.finish();
         step.finish();
 
-        let step = progress.add(progress::spinner(
-            "Ingesting outgoing links into database".into(),
-        ));
-        let bar = progress.add(progress::unit(links.1.len() as u64));
-        for (source, targets) in links.1 {
+        let step = progress.add(progress::spinner("Ingesting outgoing links into database"));
+        let bar = progress.add(progress::unit(links.outgoing.len() as u64));
+        for (source, targets) in links.outgoing {
             db.outgoing.insert(
-                &source.to_le_bytes(),
+                source.to_le_bytes(),
                 targets
                     .iter()
                     .flat_map(|id| id.to_le_bytes())
@@ -176,19 +169,11 @@ impl Database {
 
     pub fn get_shortest_paths(&self, source: PageId, target: PageId) -> Result<Paths> {
         let (source, source_is_redirect) = {
-            if let Some(new_source) = self.get_redirect(source)? {
-                (new_source, true)
-            } else {
-                (source, false)
-            }
+            (self.get_redirect(source)?).map_or((source, false), |new_source| (new_source, true))
         };
 
         let (target, target_is_redirect) = {
-            if let Some(new_target) = self.get_redirect(target)? {
-                (new_target, true)
-            } else {
-                (target, false)
-            }
+            (self.get_redirect(target)?).map_or((target, false), |new_target| (new_target, true))
         };
 
         let mut forward_parents: HashMap<PageId, HashSet<PageId>> =
@@ -205,16 +190,13 @@ impl Database {
             overlapping.insert(source);
         }
 
-        while overlapping.len() == 0 && forward_queue.len() > 0 && backward_queue.len() > 0 {
+        while overlapping.is_empty() && !forward_queue.is_empty() && !backward_queue.is_empty() {
             let mut new_parents: HashMap<PageId, HashSet<PageId>> = HashMap::new();
             if forward_queue.len() < backward_queue.len() {
                 for _ in 0..forward_queue.len() {
-                    let page =
-                        forward_queue
-                            .pop_front()
-                            .ok_or(ErrorKind::ShortestPathsAlgorithm(
-                                "empty forward queue".to_string(),
-                            ))?;
+                    let page = forward_queue.pop_front().ok_or_else(|| {
+                        ErrorKind::ShortestPathsAlgorithm("empty forward queue".to_string())
+                    })?;
                     for out in self.get_links(page, false)? {
                         if !forward_parents.contains_key(&out) {
                             forward_queue.push_back(out);
@@ -242,12 +224,9 @@ impl Database {
                 forward_depth += 1;
             } else {
                 for _ in 0..backward_queue.len() {
-                    let page =
-                        backward_queue
-                            .pop_front()
-                            .ok_or(ErrorKind::ShortestPathsAlgorithm(
-                                "empty backward queue".to_string(),
-                            ))?;
+                    let page = backward_queue.pop_front().ok_or_else(|| {
+                        ErrorKind::ShortestPathsAlgorithm("empty backward queue".to_string())
+                    })?;
                     for inc in self.get_links(page, true)? {
                         if !backward_parents.contains_key(&inc) {
                             backward_queue.push_back(inc);
@@ -284,7 +263,7 @@ impl Database {
             links: &mut HashMap<PageId, HashSet<PageId>>,
         ) -> Result<u32> {
             if let Some(direct_parents) = parents.get(&page) {
-                if direct_parents.len() > 0 {
+                if !direct_parents.is_empty() {
                     let mut occurred: HashSet<PageId> = HashSet::new();
                     for parent in direct_parents {
                         if occurred.insert(*parent) {
@@ -314,9 +293,9 @@ impl Database {
                             *counts.entry(page).or_default() += parent_count;
                         }
                     }
-                    return Ok(*counts.get(&page).ok_or(ErrorKind::ShortestPathsAlgorithm(
-                        "unmemoized path count".to_string(),
-                    ))?);
+                    return Ok(*counts.get(&page).ok_or_else(|| {
+                        ErrorKind::ShortestPathsAlgorithm("unmemoized path count".to_string())
+                    })?);
                 }
             }
             Ok(1)
@@ -345,11 +324,11 @@ impl Database {
         }
 
         Ok(Paths {
-            source: source,
+            source,
             source_is_redirect,
-            target: target,
-            target_is_redirect: target_is_redirect,
-            links: links,
+            target,
+            target_is_redirect,
+            links,
             language_code: self.metadata.language_code.clone(),
             dump_date: self.metadata.dump_date.clone(),
             path_lengths: if total_path_count != 0 {
