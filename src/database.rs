@@ -64,6 +64,7 @@ impl Database {
         let root = sled::Config::default()
             .cache_capacity(cache_capacity)
             .path(path)
+            .create_new(false)
             .open()?;
 
         let metadata = bincode::deserialize(
