@@ -14,23 +14,13 @@ use error_chain::error_chain;
 use futures::try_join;
 use hashbrown::HashMap;
 use include_dir::{include_dir, Dir};
-use notify::{
-    event::{CreateKind, ModifyKind, RemoveKind, RenameMode},
-    EventKind, RecursiveMode, Watcher,
-};
 use serde::Deserialize;
-use std::{
-    fs,
-    net::SocketAddr,
-    path::{Path, PathBuf},
-    sync::{mpsc, Arc, RwLock, RwLockReadGuard},
-};
+use std::{fs, net::SocketAddr, path::Path, sync::Arc};
 
 static WEB: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/web/dist");
 
 error_chain! {
     foreign_links {
-        Notify(notify::Error);
         Hyper(hyper::Error);
     }
 
@@ -41,62 +31,20 @@ error_chain! {
     }
 }
 
-#[derive(Clone)]
-struct Databases {
-    directory: PathBuf,
-    connections: Arc<RwLock<HashMap<String, Database>>>,
-    cache_capacity: u64,
-}
+type Databases = Arc<HashMap<String, Database>>;
 
-impl Databases {
-    fn new(dir: &Path, cache_capacity: u64) -> Result<Self> {
-        let result = Self {
-            directory: dir.to_path_buf(),
-            connections: Arc::new(RwLock::new(HashMap::new())),
-            cache_capacity,
-        };
-        result.update();
-        result.spawn_watcher()?;
-        Ok(result)
-    }
-
-    fn spawn_watcher(&self) -> Result<()> {
-        let (tx, rx) = mpsc::channel();
-        let mut watcher = notify::recommended_watcher(tx)?;
-        watcher.watch(self.directory.as_path(), RecursiveMode::NonRecursive)?;
-        let clone = self.clone();
-        std::thread::spawn(move || {
-            watcher.configure(notify::Config::default()).unwrap();
-            for msg in rx {
-                match msg {
-                    Err(e) => eprintln!("[ERROR] {}", e),
-                    Ok(event) => {
-                        if event.kind == EventKind::Create(CreateKind::Folder)
-                            || event.kind == EventKind::Remove(RemoveKind::Folder)
-                            || event.kind == EventKind::Modify(ModifyKind::Name(RenameMode::From))
-                        {
-                            println!("[INFO] database change detected, reloading...");
-                            clone.update();
-                        }
-                    }
-                }
-            }
-        });
-        Ok(())
-    }
-
-    fn update(&self) {
-        println!("[INFO] loading databases...");
-        let mut connections = self.connections.write().unwrap();
-        connections.drain().for_each(|(_, c)| drop(c));
-        if let Ok(entries) = fs::read_dir(&self.directory) {
+pub async fn serve(databases_dir: &Path, listening_port: u16, cache_capacity: u64) -> Result<()> {
+    let databases: Databases = {
+        let mut result = HashMap::new();
+        if let Ok(entries) = fs::read_dir(databases_dir) {
             entries.for_each(|entry| {
                 if let Ok(entry) = entry {
                     let path = entry.path();
                     if path.is_dir() {
-                        match Database::open(&path, self.cache_capacity) {
+                        println!("[INFO] opening {}...", path.display());
+                        match Database::open(&path, cache_capacity) {
                             Ok(database) => {
-                                connections
+                                result
                                     .insert(database.metadata.language_code.to_string(), database);
                             }
                             Err(err) => eprintln!("[WARNING] skipping database: {}", err),
@@ -105,19 +53,10 @@ impl Databases {
                 }
             });
         }
-        println!("[INFO] finished loading databases...");
-    }
-
-    fn get(&self) -> RwLockReadGuard<HashMap<String, Database>> {
-        self.connections.read().unwrap()
-    }
-}
-
-pub async fn serve(databases_dir: &Path, listening_port: u16, cache_capacity: u64) -> Result<()> {
-    let databases = Databases::new(databases_dir, cache_capacity)?;
+        Arc::new(result)
+    };
 
     async fn list_databases(Extension(databases): Extension<Databases>) -> Response {
-        let databases = databases.get();
         let list = databases
             .values()
             .map(|db| &db.metadata)
@@ -136,7 +75,6 @@ pub async fn serve(databases_dir: &Path, listening_port: u16, cache_capacity: u6
         Extension(databases): Extension<Databases>,
         query: Query<ShortestPathsQuery>,
     ) -> Response {
-        let databases = databases.get();
         if let Some(database) = databases.get(&query.language) {
             match database.get_shortest_paths(query.source, query.target) {
                 Ok(paths) => Json(paths).into_response(),
