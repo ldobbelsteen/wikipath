@@ -25,5 +25,5 @@ reqwest = { version = "0.11.14", features = ["stream"] }
 ring = "0.16.20"
 serde = { version = "1.0.152", features = ["derive"] }
 sled = "0.34.7"
-sysinfo = "0.27.7"
+sysinfo = "0.28.4"
 tokio = { version = "1.25.0", features = ["full"] }
