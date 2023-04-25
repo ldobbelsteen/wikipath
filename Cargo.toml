@@ -4,26 +4,26 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-axum = "0.6.4"
+axum = "0.6.16"
 bincode = "1.3.3"
-clap = { version = "4.1.4", features = ["derive"] }
-crossbeam-channel = "0.5.6"
+clap = { version = "4.2.4", features = ["derive"] }
+crossbeam-channel = "0.5.8"
 data-encoding = "2.3.3"
 error-chain = "0.12.4"
 flate2 = "1.0.25"
-futures = "0.3.26"
-futures-util = "0.3.26"
+futures = "0.3.28"
+futures-util = "0.3.28"
 hashbrown = { version = "0.13.2", features = ["serde"] }
-hyper = "0.14.24"
+hyper = "0.14.26"
 include_dir = "0.7.3"
 indicatif = "0.17.3"
 lazy_static = "1.4.0"
 mime_guess = "2.0.4"
 num_cpus = "1.15.0"
-regex = "1.7.1"
-reqwest = { version = "0.11.14", features = ["stream"] }
+regex = "1.8.1"
+reqwest = { version = "0.11.16", features = ["stream"] }
 ring = "0.16.20"
-serde = { version = "1.0.152", features = ["derive"] }
+serde = { version = "1.0.160", features = ["derive"] }
 sled = "0.34.7"
-sysinfo = "0.27.7"
-tokio = { version = "1.25.0", features = ["full"] }
+sysinfo = "0.28.4"
+tokio = { version = "1.27.0", features = ["full"] }
