@@ -14,7 +14,7 @@ flate2 = "1.0.26"
 futures = "0.3.28"
 futures-util = "0.3.28"
 hashbrown = { version = "0.13.2", features = ["serde"] }
-hyper = "0.14.26"
+hyper = "0.14.27"
 include_dir = "0.7.3"
 indicatif = "0.17.3"
 lazy_static = "1.4.0"
