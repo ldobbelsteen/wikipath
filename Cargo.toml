@@ -23,7 +23,7 @@ num_cpus = "1.15.0"
 regex = "1.8.1"
 reqwest = { version = "0.11.16", features = ["stream"] }
 ring = "0.16.20"
-serde = { version = "1.0.160", features = ["derive"] }
+serde = { version = "1.0.164", features = ["derive"] }
 sled = "0.34.7"
 sysinfo = "0.28.4"
 tokio = { version = "1.28.0", features = ["full"] }
