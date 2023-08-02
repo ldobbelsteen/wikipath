@@ -12,7 +12,7 @@ const App = () => {
   const submitForm = (
     languageCode: string,
     sourceId: number,
-    targetId: number
+    targetId: number,
   ) => {
     setPaths(undefined);
     HTTP.shortestPaths(languageCode, sourceId, targetId)

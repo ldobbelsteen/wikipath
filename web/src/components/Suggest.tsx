@@ -28,7 +28,7 @@ export const Suggest = <T,>(props: {
       }, 800);
       setDebounce(newDebounce);
     },
-    [fetchSuggestions, debounce]
+    [fetchSuggestions, debounce],
   );
 
   return (

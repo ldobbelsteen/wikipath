@@ -22,7 +22,7 @@ export const Language = (props: {
         setDatabases(databases);
         for (const language of navigator.languages) {
           const supported = databases.find((database) =>
-            database.languageCode.includes(language.substring(0, 2))
+            database.languageCode.includes(language.substring(0, 2)),
           );
           if (supported) {
             setSelectedLanguageCode(supported.languageCode);
@@ -37,7 +37,7 @@ export const Language = (props: {
       .finally(() => setIsLoading(false))
       .catch((err) => {
         toast.error(
-          "An unexpected error occurred while getting the available languages :("
+          "An unexpected error occurred while getting the available languages :(",
         );
         console.error(err);
       });
@@ -48,13 +48,13 @@ export const Language = (props: {
       className="m-1 p-2"
       value={
         databases?.find(
-          (database) => database.languageCode === props.selectedLanguageCode
+          (database) => database.languageCode === props.selectedLanguageCode,
         )?.languageCode
       }
       disabled={props.disabled || isLoading}
       onChange={(ev) => {
         const database = databases?.find(
-          (database) => database.languageCode === ev.target.value
+          (database) => database.languageCode === ev.target.value,
         );
         if (database) {
           setSelectedLanguageCode(database.languageCode);

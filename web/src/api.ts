@@ -10,7 +10,7 @@ export abstract class HTTP {
   private static get = async <T, U>(
     url: string,
     schema: z.Schema<T, z.ZodTypeDef, U>,
-    abort?: AbortSignal
+    abort?: AbortSignal,
   ): Promise<T> => {
     const res = await fetch(url, {
       signal: abort,
@@ -37,7 +37,7 @@ export abstract class HTTP {
   static shortestPaths = (
     languageCode: string,
     sourceId: number,
-    targetId: number
+    targetId: number,
   ) => {
     const url = `/api/shortest_paths?language=${languageCode}&source=${sourceId}&target=${targetId}`;
     return this.get(url, Schema.Paths);
@@ -50,7 +50,7 @@ export abstract class HTTP {
 
   static pageTitles = async (
     languageCode: string,
-    pageIds: number[]
+    pageIds: number[],
   ): Promise<Record<number, string>> => {
     if (pageIds.length > 50) {
       const left = pageIds.slice(0, 50);
@@ -68,7 +68,7 @@ export abstract class HTTP {
     languageCode: string,
     searchString: string,
     resultLimit: number,
-    abort: AbortSignal
+    abort: AbortSignal,
   ) => {
     const url = `https://${languageCode}.wikipedia.org/w/api.php?origin=*&action=query&list=prefixsearch&pslimit=${resultLimit}&pssearch=${searchString}&format=json`;
     return this.get(url, Schema.WikipediaSearch, abort);
@@ -105,14 +105,14 @@ export abstract class Schema {
           .string()
           .min(1)
           .transform((s) => parseInt(s)),
-        z.array(this.Id)
+        z.array(this.Id),
       ),
       pathLengths: z.number().int().nonnegative(),
       pathCount: z.number().int().nonnegative(),
     })
     .transform(
       async (
-        graph
+        graph,
       ): Promise<{
         source: Page;
         sourceIsRedirect: boolean;
@@ -126,7 +126,7 @@ export abstract class Schema {
         const rawPaths = this.extractPaths(graph, 8);
         const titles = await HTTP.pageTitles(
           graph.languageCode,
-          flattenUnique(rawPaths)
+          flattenUnique(rawPaths),
         );
         const idToPage = (id: number) => ({ id: id, title: titles[id] });
         const paths = rawPaths.map((path) => path.map(idToPage));
@@ -140,12 +140,12 @@ export abstract class Schema {
           pathLengths: graph.pathLengths,
           pathCount: graph.pathCount,
         };
-      }
+      },
     );
 
   private static extractPaths = (
     graph: z.input<typeof this.Paths>,
-    maxPaths: number
+    maxPaths: number,
   ): number[][] => {
     const result: number[][] = [];
     const recurse = (page: number, path: number[]): boolean => {
@@ -184,15 +184,15 @@ export abstract class Schema {
           z.object({
             pageid: this.Id,
             title: this.Title,
-          })
+          }),
         ),
       }),
     })
     .transform((obj) =>
       Object.values(obj.query.pages).reduce(
         (record, page) => ({ ...record, [page.pageid]: page.title }),
-        {} as Record<number, string>
-      )
+        {} as Record<number, string>,
+      ),
     );
 
   static WikipediaSearch = z
@@ -204,7 +204,7 @@ export abstract class Schema {
               pageid: this.Id,
               title: this.Title,
             })
-            .transform((p) => ({ id: p.pageid, title: p.title }))
+            .transform((p) => ({ id: p.pageid, title: p.title })),
         ),
       }),
     })

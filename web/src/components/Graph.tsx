@@ -127,33 +127,33 @@ export const Graph = (props: {
       "start",
       (
         ev: D3DragEvent<SVGGElement, Node, Node | d3.SubjectPosition>,
-        subject: Node
+        subject: Node,
       ) => {
         if (!ev.active) simulation.alphaTarget(0.3).restart();
         subject.fx = subject.x;
         subject.fy = subject.y;
-      }
+      },
     );
     nodeDrag.on(
       "drag",
       (
         ev: D3DragEvent<SVGGElement, Node, Node | d3.SubjectPosition>,
-        subject: Node
+        subject: Node,
       ) => {
         subject.fx = ev.x;
         subject.fy = ev.y;
-      }
+      },
     );
     nodeDrag.on(
       "end",
       (
         ev: D3DragEvent<SVGGElement, Node, Node | d3.SubjectPosition>,
-        subject: Node
+        subject: Node,
       ) => {
         if (!ev.active) simulation.alphaTarget(0);
         subject.fx = null;
         subject.fy = null;
-      }
+      },
     );
 
     /** Add zoom and pan behaviour */
@@ -163,7 +163,7 @@ export const Graph = (props: {
           select(".pages").attr("transform", ev.transform.toString());
           select(".links").attr("transform", ev.transform.toString());
         })
-        .scaleExtent([0.5, 4])
+        .scaleExtent([0.5, 4]),
     );
 
     /** Create group for the pages/nodes */
@@ -186,7 +186,7 @@ export const Graph = (props: {
       .attr(
         "href",
         (node) =>
-          `https://${paths.languageCode}.wikipedia.org/wiki/${node.title}`
+          `https://${paths.languageCode}.wikipedia.org/wiki/${node.title}`,
       );
 
     /** Represent the nodes as colored circles */

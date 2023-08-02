@@ -38,7 +38,7 @@ export const Search = (props: {
         .then((suggestions) => {
           setSuggestions(suggestions);
           setPage(
-            suggestions.find((page) => weakStringEquals(page.title, search))
+            suggestions.find((page) => weakStringEquals(page.title, search)),
           );
           return null;
         })
@@ -48,13 +48,13 @@ export const Search = (props: {
             clearSuggestions();
             setPage(undefined);
             toast.error(
-              "An unexpected error occurred while getting page suggestions :("
+              "An unexpected error occurred while getting page suggestions :(",
             );
             console.error(err);
           }
         });
     },
-    [clearSuggestions, languageCode, setPage, setReady]
+    [clearSuggestions, languageCode, setPage, setReady],
   );
 
   const randomPage = useCallback(() => {
