@@ -10,7 +10,7 @@ clap = { version = "4.3.21", features = ["derive"] }
 crossbeam-channel = "0.5.8"
 data-encoding = "2.4.0"
 error-chain = "0.12.4"
-flate2 = "1.0.26"
+flate2 = "1.0.27"
 futures = "0.3.28"
 futures-util = "0.3.28"
 hashbrown = { version = "0.14.0", features = ["serde"] }
