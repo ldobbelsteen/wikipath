@@ -21,7 +21,7 @@ lazy_static = "1.4.0"
 mime_guess = "2.0.4"
 num_cpus = "1.16.0"
 regex = "1.9.3"
-reqwest = { version = "0.11.18", features = ["stream"] }
+reqwest = { version = "0.11.20", features = ["stream"] }
 ring = "0.16.20"
 serde = { version = "1.0.183", features = ["derive"] }
 sled = "0.34.7"
