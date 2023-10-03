@@ -36,6 +36,7 @@ pub async fn build(
 
     // Create a new database and prepare for ingestion.
     let path = databases_dir.join(metadata.to_tmp_name());
+    std::fs::remove_file(&path)?;
     let mut database = Database::open(&path)?;
     let transaction = database.begin_write()?;
     let build = Arc::new(transaction.open_build()?);
