@@ -1,7 +1,5 @@
-@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;700');
-
 * {
-    font-family: "Poppins", sans-serif;
+    font-family: sans-serif;
 }
 
 @tailwind base;
@@ -9,7 +7,6 @@
 @tailwind utilities;
 
 @layer base {
-
     input,
     button,
     select {
@@ -18,6 +15,6 @@
 
     select,
     button {
-        @apply hover:bg-gray;
+        @apply hover:bg-gray-400;
     }
 }

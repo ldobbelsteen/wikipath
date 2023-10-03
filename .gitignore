@@ -1,6 +1,7 @@
 databases
-dumps
 target
 
 web/dist
 web/node_modules
+
+*.sh
