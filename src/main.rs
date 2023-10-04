@@ -1,9 +1,10 @@
 use clap::{Parser, Subcommand};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 mod build;
 mod database;
 mod dump;
+mod memory;
 mod parse;
 mod progress;
 mod search;
@@ -24,19 +25,25 @@ enum Action {
         languages: String,
         /// Directory to output database(s) to.
         #[clap(short, long, default_value = "./databases")]
-        output: String,
+        databases: String,
+        /// Directory to download the dump files to.
+        #[clap(short, long)]
+        dumps: Option<String>,
         /// Number of threads to use while parsing. Uses all by default.
         #[clap(short, long)]
         threads: Option<usize>,
+        /// Maximum number of gigabytes (GB) of memory that can be used for caching (not a hard limit).
+        #[clap(short, long, default_value = "12")]
+        memory: u64,
     },
     /// Serve Wikipath database(s).
     Serve {
         /// Directory of databases.
         #[clap(short, long, default_value = "./databases")]
-        databases_dir: String,
-        /// Port on which to serve web interface.
+        databases: String,
+        /// Port on which to serve the web interface and api.
         #[clap(short, long, default_value_t = 1789)]
-        listening_port: u16,
+        port: u16,
     },
 }
 
@@ -46,24 +53,35 @@ async fn main() {
     match args.action {
         Action::Build {
             languages,
-            output,
+            databases,
+            dumps,
             threads,
+            memory,
         } => {
-            let databases_dir = Path::new(&output);
+            let databases_dir = Path::new(&databases);
+            let dumps_dir = dumps
+                .map(PathBuf::from)
+                .unwrap_or(std::env::temp_dir().join("wikipath"));
             let thread_count = threads.unwrap_or_else(num_cpus::get);
+            let max_memory_usage = memory * 1024 * 1024 * 1024;
             for language_code in languages.split(',') {
-                if let Err(e) = build::build(language_code, databases_dir, thread_count).await {
+                if let Err(e) = build::build(
+                    language_code,
+                    databases_dir,
+                    &dumps_dir,
+                    thread_count,
+                    max_memory_usage,
+                )
+                .await
+                {
                     eprintln!("[FATAL] {}", e);
                     std::process::exit(1);
                 }
             }
         }
-        Action::Serve {
-            databases_dir,
-            listening_port,
-        } => {
-            let databases_dir = Path::new(&databases_dir);
-            if let Err(e) = serve::serve(databases_dir, listening_port).await {
+        Action::Serve { databases, port } => {
+            let databases_dir = Path::new(&databases);
+            if let Err(e) = serve::serve(databases_dir, port).await {
                 eprintln!("[FATAL] {}", e);
                 std::process::exit(1);
             }

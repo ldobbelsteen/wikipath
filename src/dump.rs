@@ -97,23 +97,23 @@ impl Dump {
     /// Download all relevant dump files from Wikimedia into a directory.
     pub async fn download_external(
         dumps_dir: &Path,
-        metadata: ExternalDumpFiles,
+        files: ExternalDumpFiles,
         progress: MultiProgress,
     ) -> Result<Self> {
         fs::create_dir_all(dumps_dir)?;
         let step = progress.add(progress::spinner("Downloading latest dump"));
         let (pages, redirects, pagelinks) = try_join!(
-            Self::download_external_file(dumps_dir, &metadata.pages, progress.clone()),
-            Self::download_external_file(dumps_dir, &metadata.redirects, progress.clone()),
-            Self::download_external_file(dumps_dir, &metadata.pagelinks, progress.clone())
+            Self::download_external_file(dumps_dir, &files.pages, progress.clone()),
+            Self::download_external_file(dumps_dir, &files.redirects, progress.clone()),
+            Self::download_external_file(dumps_dir, &files.pagelinks, progress.clone())
         )?;
         step.finish();
 
         let step = progress.add(progress::spinner("Hashing latest dump"));
         try_join!(
-            Self::check_file_hash(&pages, &metadata.pages.hash, progress.clone()),
-            Self::check_file_hash(&redirects, &metadata.redirects.hash, progress.clone()),
-            Self::check_file_hash(&pagelinks, &metadata.pagelinks.hash, progress.clone())
+            Self::check_file_hash(&pages, &files.pages.hash, progress.clone()),
+            Self::check_file_hash(&redirects, &files.redirects.hash, progress.clone()),
+            Self::check_file_hash(&pagelinks, &files.pagelinks.hash, progress.clone())
         )?;
         step.finish();
 
@@ -121,7 +121,7 @@ impl Dump {
             pages,
             redirects,
             pagelinks,
-            external: metadata,
+            external: files,
         })
     }
 

@@ -8,6 +8,8 @@ use std::path::Path;
 use std::sync::{Mutex, RwLock};
 use std::{mem, vec};
 
+use crate::memory::MemoryUsage;
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Metadata {
@@ -77,7 +79,10 @@ pub struct WriteTransaction<'db> {
 }
 
 impl<'db> WriteTransaction<'db> {
-    pub fn open_build<'txn>(&'txn self) -> Result<BuildTransaction<'db, 'txn>> {
+    pub fn open_build<'txn>(
+        &'txn self,
+        max_memory_usage: u64,
+    ) -> Result<BuildTransaction<'db, 'txn>> {
         Ok(BuildTransaction {
             incoming_table: Mutex::new(self.inner.open_table(INCOMING)?),
             outgoing_table: Mutex::new(self.inner.open_table(OUTGOING)?),
@@ -86,6 +91,8 @@ impl<'db> WriteTransaction<'db> {
             outgoing_cache: Default::default(),
             redirects_cache: Default::default(),
             ids: Default::default(),
+            memory_usage: MemoryUsage::new(5)?,
+            max_memory_usage,
         })
     }
 
@@ -129,6 +136,8 @@ pub struct BuildTransaction<'db, 'txn> {
     outgoing_cache: Mutex<HashMap<PageId, PageIds>>,
     redirects_cache: Mutex<HashMap<PageId, PageId>>,
     ids: RwLock<HashMap<String, PageId>>,
+    memory_usage: MemoryUsage,
+    max_memory_usage: u64,
 }
 
 impl<'db, 'txn> BuildTransaction<'db, 'txn> {
@@ -158,19 +167,33 @@ impl<'db, 'txn> BuildTransaction<'db, 'txn> {
             .or_default()
             .0
             .push(target);
-        // TODO: implement intelligent intermittent flushing
+        self.shrink_cache()?;
         Ok(())
     }
 
     /// Store a redirect from one page's id to another.
     pub fn insert_redirect(&self, source: PageId, target: PageId) -> Result<()> {
         self.redirects_cache.lock().unwrap().insert(source, target);
-        // TODO: implement intelligent intermittent flushing
+        self.shrink_cache()?;
         Ok(())
     }
 
-    /// Flush currently cached links to disk.
-    pub fn flush_links(&self) -> Result<()> {
+    /// Shrink cache until below maximum memory usage.
+    fn shrink_cache(&self) -> Result<()> {
+        if self.memory_usage.get() > self.max_memory_usage {
+            self.flush_redirects()?;
+            if self.memory_usage.get() > self.max_memory_usage {
+                self.flush_outgoing()?;
+                if self.memory_usage.get() > self.max_memory_usage {
+                    self.flush_incoming()?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Flush currently cached incoming links to disk.
+    fn flush_incoming(&self) -> Result<()> {
         let mut incoming_table = self.incoming_table.lock().unwrap();
         for (target, mut sources) in self.incoming_cache.lock().unwrap().drain() {
             if let Some(mut old_sources) = incoming_table.get(target)?.map(|r| r.value()) {
@@ -178,6 +201,11 @@ impl<'db, 'txn> BuildTransaction<'db, 'txn> {
             }
             incoming_table.insert(target, sources)?;
         }
+        Ok(())
+    }
+
+    /// Flush currently cached incoming links to disk.
+    fn flush_outgoing(&self) -> Result<()> {
         let mut outgoing_table = self.outgoing_table.lock().unwrap();
         for (source, mut targets) in self.outgoing_cache.lock().unwrap().drain() {
             if let Some(mut old_targets) = outgoing_table.get(source)?.map(|r| r.value()) {
@@ -189,7 +217,7 @@ impl<'db, 'txn> BuildTransaction<'db, 'txn> {
     }
 
     /// Flush currently cached redirects to disk.
-    pub fn flush_redirects(&self) -> Result<()> {
+    fn flush_redirects(&self) -> Result<()> {
         let mut redirects_cache = self.redirects_cache.lock().unwrap();
         let mut redirects_table = self.redirects_table.lock().unwrap();
         for (source, target) in redirects_cache.iter() {
@@ -226,7 +254,8 @@ impl<'db, 'txn> BuildTransaction<'db, 'txn> {
     /// Flush all cached items to disk and close.
     pub fn flush(self) -> Result<()> {
         self.flush_redirects()?;
-        self.flush_links()?;
+        self.flush_outgoing()?;
+        self.flush_incoming()?;
         Ok(())
     }
 }

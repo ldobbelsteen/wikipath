@@ -17,7 +17,9 @@ use std::{
 pub async fn build(
     language_code: &str,
     databases_dir: &Path,
+    dumps_dir: &Path,
     thread_count: usize,
+    max_memory_usage: u64,
 ) -> Result<PathBuf> {
     let start = Instant::now();
     println!("\n[INFO] Building '{}' database...", language_code);
@@ -31,15 +33,14 @@ pub async fn build(
     };
 
     // Download the relevant dump files to a temporary directory.
-    let dumps_dir = std::env::temp_dir().join("wikipath");
-    let dump = Dump::download_external(&dumps_dir, latest, progress.clone()).await?;
+    let dump = Dump::download_external(dumps_dir, latest, progress.clone()).await?;
 
     // Create a new database and prepare for ingestion.
     let path = databases_dir.join(metadata.to_tmp_name());
-    std::fs::remove_file(&path)?;
+    let _ = std::fs::remove_file(&path);
     let mut database = Database::open(&path)?;
     let transaction = database.begin_write()?;
-    let build = Arc::new(transaction.open_build()?);
+    let build = Arc::new(transaction.open_build(max_memory_usage)?);
 
     // Parse the page dump, extracting all pages' IDs and titles.
     let step = progress.add(progress::spinner("Parsing page dump"));
