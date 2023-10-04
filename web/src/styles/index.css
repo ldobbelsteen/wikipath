@@ -15,6 +15,6 @@
 
     select,
     button {
-        @apply hover:bg-gray-400;
+        @apply hover:bg-zinc-400;
     }
 }
