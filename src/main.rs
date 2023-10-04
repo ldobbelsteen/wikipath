@@ -21,28 +21,28 @@ enum Action {
     /// Build Wikipath database(s).
     Build {
         /// Language(s) to build, separated by commas. Uses ISO codes from https://en.wikipedia.org/wiki/List_of_Wikipedias.
-        #[clap(short, long)]
+        #[clap(long)]
         languages: String,
         /// Directory to output database(s) to.
-        #[clap(short, long, default_value = "./databases")]
+        #[clap(long, default_value = "./databases")]
         databases: String,
-        /// Directory to download the dump files to.
-        #[clap(short, long)]
+        /// Directory to download the dump files to. Uses the temporary directory by default.
+        #[clap(long)]
         dumps: Option<String>,
         /// Number of threads to use while parsing. Uses all by default.
-        #[clap(short, long)]
+        #[clap(long)]
         threads: Option<usize>,
         /// Maximum number of gigabytes (GB) of memory that can be used for caching (not a hard limit).
-        #[clap(short, long, default_value = "12")]
+        #[clap(long, default_value = "12")]
         memory: u64,
     },
     /// Serve Wikipath database(s).
     Serve {
         /// Directory of databases.
-        #[clap(short, long, default_value = "./databases")]
+        #[clap(short, default_value = "./databases")]
         databases: String,
         /// Port on which to serve the web interface and api.
-        #[clap(short, long, default_value_t = 1789)]
+        #[clap(short, default_value_t = 1789)]
         port: u16,
     },
 }
