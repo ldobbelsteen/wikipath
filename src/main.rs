@@ -1,12 +1,13 @@
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
-use sysinfo::{System, SystemExt};
+use std::path::{Path, PathBuf};
 
 mod build;
 mod database;
 mod dump;
+mod memory;
 mod parse;
 mod progress;
+mod search;
 mod serve;
 
 #[derive(Parser)]
@@ -21,31 +22,28 @@ enum Action {
     Build {
         /// Language(s) to build, separated by commas. Uses ISO codes from https://en.wikipedia.org/wiki/List_of_Wikipedias.
         #[clap(long)]
-        language: String,
+        languages: String,
         /// Directory to output database(s) to.
         #[clap(long, default_value = "./databases")]
         databases: String,
-        /// Directory to download dump files to.
-        #[clap(long, default_value = "./dumps")]
-        dumps: String,
-        /// Page cache size in gigabytes (GB). Uses half of system memory by default.
+        /// Directory to download the dump files to. Uses the temporary directory by default.
         #[clap(long)]
-        cache: Option<u64>,
+        dumps: Option<String>,
         /// Number of threads to use while parsing. Uses all by default.
         #[clap(long)]
         threads: Option<usize>,
+        /// Maximum number of gigabytes (GB) of memory that can be used for caching (not a hard limit).
+        #[clap(long, default_value = "12")]
+        memory: u64,
     },
     /// Serve Wikipath database(s).
     Serve {
         /// Directory of databases.
-        #[clap(long, default_value = "./databases")]
+        #[clap(short, default_value = "./databases")]
         databases: String,
-        /// Port on which to serve web interface.
-        #[clap(long, default_value_t = 1789)]
+        /// Port on which to serve the web interface and api.
+        #[clap(short, default_value_t = 1789)]
         port: u16,
-        /// Per-database page cache size in gigabytes (GB).
-        #[clap(long, default_value_t = 1)]
-        cache: u64,
     },
 }
 
@@ -54,30 +52,25 @@ async fn main() {
     let args = Arguments::parse();
     match args.action {
         Action::Build {
-            language,
+            languages,
             databases,
             dumps,
-            cache,
             threads,
+            memory,
         } => {
-            let databases_dir = PathBuf::from(databases);
-            let dumps_dir = PathBuf::from(dumps);
-            let cache_capacity = cache.map_or_else(
-                || {
-                    let mut sys = System::new();
-                    sys.refresh_memory();
-                    sys.total_memory() / 2
-                },
-                |cache| cache * 1024 * 1024 * 1024,
-            );
+            let databases_dir = Path::new(&databases);
+            let dumps_dir = dumps
+                .map(PathBuf::from)
+                .unwrap_or(std::env::temp_dir().join("wikipath"));
             let thread_count = threads.unwrap_or_else(num_cpus::get);
-            for language in language.split(',') {
+            let max_memory_usage = memory * 1024 * 1024 * 1024;
+            for language_code in languages.split(',') {
                 if let Err(e) = build::build(
-                    language,
-                    &databases_dir,
+                    language_code,
+                    databases_dir,
                     &dumps_dir,
-                    cache_capacity,
                     thread_count,
+                    max_memory_usage,
                 )
                 .await
                 {
@@ -86,14 +79,9 @@ async fn main() {
                 }
             }
         }
-        Action::Serve {
-            databases,
-            port,
-            cache,
-        } => {
-            let databases_dir = PathBuf::from(databases);
-            let cache_capacity = cache * 1024 * 1024 * 1024;
-            if let Err(e) = serve::serve(&databases_dir, port, cache_capacity).await {
+        Action::Serve { databases, port } => {
+            let databases_dir = Path::new(&databases);
+            if let Err(e) = serve::serve(databases_dir, port).await {
                 eprintln!("[FATAL] {}", e);
                 std::process::exit(1);
             }

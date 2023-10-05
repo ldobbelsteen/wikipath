@@ -1,50 +1,34 @@
 use crate::progress;
+use anyhow::{anyhow, bail, Result};
 use data_encoding::HEXLOWER;
-use error_chain::error_chain;
 use futures::try_join;
 use futures_util::StreamExt;
 use indicatif::MultiProgress;
 use regex::Regex;
 use ring::digest;
-use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File},
-    io::{self, BufReader, Read, Write},
+    io::{BufReader, Read, Write},
     path::{Path, PathBuf},
     str,
 };
 
-error_chain! {
-    foreign_links {
-        Io(io::Error);
-        Http(reqwest::Error);
-    }
-
-    errors {
-        HashMismatch(file: PathBuf, digest: String, target: String) {
-            display("expected hash of '{}' to be '{}', but was '{}'", file.display(), target, digest)
-        }
-        MissingDumpType(dump_type: String) {
-            display("missing dump type '{}'", dump_type)
-        }
-        MissingContentLength(url: String) {
-            display("missing content length header for '{}'", url)
-        }
-    }
+#[derive(Debug)]
+pub struct Dump {
+    pub pages: PathBuf,
+    pub redirects: PathBuf,
+    pub pagelinks: PathBuf,
+    pub external: ExternalDumpFiles,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Metadata {
-    pub dump_date: String,
-    pub language_code: String,
+#[derive(Debug)]
+pub struct ExternalDumpFiles {
     pages: ExternalFile,
     redirects: ExternalFile,
     pagelinks: ExternalFile,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug)]
 struct ExternalFile {
     full_name: String,
     language_code: String,
@@ -52,16 +36,19 @@ struct ExternalFile {
     hash: String,
 }
 
-#[derive(Debug)]
-pub struct Dump {
-    pub pages: PathBuf,
-    pub redirects: PathBuf,
-    pub pagelinks: PathBuf,
-    pub metadata: Metadata,
+impl ExternalDumpFiles {
+    pub fn get_language_code(&self) -> String {
+        self.pages.language_code.clone()
+    }
+
+    pub fn get_dump_date(&self) -> String {
+        self.pages.dump_date.clone()
+    }
 }
 
 impl Dump {
-    pub async fn latest_metadata(language_code: &str) -> Result<Metadata> {
+    /// Get information on the newest available dump from Wikimedia.
+    pub async fn get_latest_external(language_code: &str) -> Result<ExternalDumpFiles> {
         fn find_hash(hashes: &str, re: Regex) -> Option<ExternalFile> {
             hashes
                 .lines()
@@ -86,46 +73,47 @@ impl Dump {
 
         let page = find_hash(
             &hashes,
-            Regex::new(r"([0-9a-f]{40})  ((.+)wiki-([0-9]{8})-page.sql.gz)").unwrap(),
+            Regex::new(r"([0-9a-f]{40})  ((.+)wiki-([0-9]{8})-page.sql.gz)")?,
         )
-        .ok_or_else(|| ErrorKind::MissingDumpType("page".to_string()))?;
+        .ok_or(anyhow!("missing page dump in sums file"))?;
         let redir = find_hash(
             &hashes,
-            Regex::new(r"([0-9a-f]{40})  ((.+)wiki-([0-9]{8})-redirect.sql.gz)").unwrap(),
+            Regex::new(r"([0-9a-f]{40})  ((.+)wiki-([0-9]{8})-redirect.sql.gz)")?,
         )
-        .ok_or_else(|| ErrorKind::MissingDumpType("redirect".to_string()))?;
+        .ok_or(anyhow!("missing redirect dump in sums file"))?;
         let link = find_hash(
             &hashes,
-            Regex::new(r"([0-9a-f]{40})  ((.+)wiki-([0-9]{8})-pagelinks.sql.gz)").unwrap(),
+            Regex::new(r"([0-9a-f]{40})  ((.+)wiki-([0-9]{8})-pagelinks.sql.gz)")?,
         )
-        .ok_or_else(|| ErrorKind::MissingDumpType("pagelinks".to_string()))?;
+        .ok_or(anyhow!("missing pagelinks dump in sums file"))?;
 
-        Ok(Metadata {
-            dump_date: page.dump_date.to_string(),
-            language_code: page.language_code.to_string(),
+        Ok(ExternalDumpFiles {
             pages: page,
             redirects: redir,
             pagelinks: link,
         })
     }
 
-    pub async fn download(dumps_dir: &PathBuf, metadata: Metadata) -> Result<Self> {
+    /// Download all relevant dump files from Wikimedia into a directory.
+    pub async fn download_external(
+        dumps_dir: &Path,
+        files: ExternalDumpFiles,
+        progress: MultiProgress,
+    ) -> Result<Self> {
         fs::create_dir_all(dumps_dir)?;
-
-        let progress = MultiProgress::new();
         let step = progress.add(progress::spinner("Downloading latest dump"));
         let (pages, redirects, pagelinks) = try_join!(
-            Self::download_file(dumps_dir, &metadata.pages, progress.clone()),
-            Self::download_file(dumps_dir, &metadata.redirects, progress.clone()),
-            Self::download_file(dumps_dir, &metadata.pagelinks, progress.clone())
+            Self::download_external_file(dumps_dir, &files.pages, progress.clone()),
+            Self::download_external_file(dumps_dir, &files.redirects, progress.clone()),
+            Self::download_external_file(dumps_dir, &files.pagelinks, progress.clone())
         )?;
         step.finish();
 
         let step = progress.add(progress::spinner("Hashing latest dump"));
         try_join!(
-            Self::confirm_hash(&pages, &metadata.pages.hash, progress.clone()),
-            Self::confirm_hash(&redirects, &metadata.redirects.hash, progress.clone()),
-            Self::confirm_hash(&pagelinks, &metadata.pagelinks.hash, progress.clone())
+            Self::check_file_hash(&pages, &files.pages.hash, progress.clone()),
+            Self::check_file_hash(&redirects, &files.redirects.hash, progress.clone()),
+            Self::check_file_hash(&pagelinks, &files.pagelinks.hash, progress.clone())
         )?;
         step.finish();
 
@@ -133,11 +121,12 @@ impl Dump {
             pages,
             redirects,
             pagelinks,
-            metadata,
+            external: files,
         })
     }
 
-    async fn download_file(
+    /// Download a single file from Wikimedia into a directory.
+    async fn download_external_file(
         dumps_dir: &Path,
         external_file: &ExternalFile,
         progress: MultiProgress,
@@ -163,7 +152,7 @@ impl Dump {
             .headers()
             .get(reqwest::header::CONTENT_LENGTH)
             .and_then(|h| h.to_str().ok().and_then(|s| s.parse().ok()))
-            .ok_or_else(|| ErrorKind::MissingContentLength(url.clone()))?;
+            .ok_or(anyhow!("missing Content-Length header at '{}'", url))?;
 
         let bar = progress.add(progress::byte(
             &external_file.full_name,
@@ -192,7 +181,8 @@ impl Dump {
         Ok(target)
     }
 
-    async fn confirm_hash(path: &PathBuf, hash: &str, progress: MultiProgress) -> Result<()> {
+    /// Check whether the hash of a file matches with a given hash.
+    async fn check_file_hash(path: &Path, hash: &str, progress: MultiProgress) -> Result<()> {
         let file = File::open(path)?;
         let mut reader = BufReader::new(&file);
         let mut context = digest::Context::new(&digest::SHA1_FOR_LEGACY_USE_ONLY);
@@ -216,7 +206,12 @@ impl Dump {
         bar.finish();
         let digest = HEXLOWER.encode(context.finish().as_ref());
         if digest != hash {
-            return Err(ErrorKind::HashMismatch(path.clone(), digest, hash.into()).into());
+            bail!(
+                "file '{}' hash mismatch between digest {} and target {}",
+                path.display(),
+                digest,
+                hash
+            );
         }
 
         Ok(())

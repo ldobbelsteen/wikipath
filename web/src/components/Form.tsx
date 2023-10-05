@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Page } from "../api";
-import Swap from "../static/swap.svg";
+import Swap from "../assets/swap.svg";
 import { Language } from "./Language";
 import { Search } from "./Search";
 

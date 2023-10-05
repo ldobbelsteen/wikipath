@@ -1,9 +1,9 @@
 import React, { useCallback, useRef, useState } from "react";
 import { toast } from "react-hot-toast";
 import { HTTP, Page } from "../api";
+import Dice from "../assets/dice.svg";
+import Loading from "../assets/loading.svg";
 import { weakStringEquals } from "../misc";
-import Dice from "../static/dice.svg";
-import Loading from "../static/loading.svg";
 import { Suggest } from "./Suggest";
 
 export const Search = (props: {

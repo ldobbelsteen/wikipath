@@ -14,7 +14,7 @@ import {
 import { SimulationLinkDatum, SimulationNodeDatum } from "d3-force";
 import React, { useEffect, useRef, useState } from "react";
 import { Paths } from "../api";
-import Loading from "../static/loading.svg";
+import Loading from "../assets/loading.svg";
 
 type Link = SimulationLinkDatum<Node>;
 interface Node extends SimulationNodeDatum {
@@ -52,9 +52,8 @@ export const Graph = (props: {
     }
 
     /** Show message based on graph content */
-    let message = `Found ${paths.pathCount} ${
-      paths.pathCount === 1 ? "path" : "paths"
-    } of degree ${paths.pathLengths}.`;
+    let message = `Found ${paths.pathCount} ${paths.pathCount === 1 ? "path" : "paths"
+      } of degree ${paths.pathLengths}.`;
     if (paths.pathCount > paths.paths.length) {
       message += ` Only ${paths.paths.length} of them are shown below.`;
     }

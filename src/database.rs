@@ -1,376 +1,327 @@
-use crate::{
-    dump::{self, Metadata},
-    parse, progress,
-};
-use error_chain::error_chain;
+use anyhow::{anyhow, Result};
 use hashbrown::{HashMap, HashSet};
-use indicatif::MultiProgress;
+use itertools::Itertools;
+use redb::{ReadOnlyTable, ReadableTable, RedbValue, Table, TableDefinition, TypeName};
+use regex::Regex;
 use serde::Serialize;
-use std::sync::Arc;
-use std::{collections::VecDeque, mem, path::PathBuf};
+use std::path::Path;
+use std::sync::{Mutex, RwLock};
+use std::{mem, vec};
 
-error_chain! {
-    foreign_links {
-        Sled(sled::Error);
-        Bincode(bincode::Error);
-        Parse(parse::Error);
-    }
-
-    errors {
-        ShortestPathsAlgorithm(msg: String) {
-            display("unexpected error in shortest paths algorithm: {}", msg)
-        }
-        MissingMetadata(path: PathBuf) {
-            display("database at '{}' is missing metadata", path.display())
-        }
-        InvalidBytes(msg: String) {
-            display("invalid bytes encountered: {}", msg)
-        }
-    }
-}
-
-pub static INCOMING_TREE_NAME: &str = "incoming";
-pub static OUTGOING_TREE_NAME: &str = "outgoing";
-pub static REDIRECTS_TREE_NAME: &str = "redirects";
-pub static METADATA_KEY: &str = "metadata";
-
-pub type PageId = u32;
+use crate::memory::MemoryUsage;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Paths {
-    source: PageId,
-    source_is_redirect: bool,
-    target: PageId,
-    target_is_redirect: bool,
-    links: HashMap<PageId, HashSet<PageId>>,
-    language_code: String,
-    dump_date: String,
-    path_lengths: u32,
-    path_count: u32,
+pub struct Metadata {
+    pub language_code: String,
+    pub dump_date: String,
 }
+
+impl Metadata {
+    /// Extract metadata from the name of a database.
+    pub fn from_name(s: &str) -> Result<Self> {
+        let re = Regex::new(r"(.+)-(.+).redb(?:\.tmp)?")?;
+        if let Some(caps) = re.captures(s) {
+            if let Some(language_code) = caps.get(1) {
+                if let Some(dump_date) = caps.get(2) {
+                    return Ok(Metadata {
+                        language_code: language_code.as_str().into(),
+                        dump_date: dump_date.as_str().into(),
+                    });
+                }
+            }
+        }
+        Err(anyhow!("database path '{}' is not valid", s))
+    }
+
+    /// Create name containing all database metadata.
+    pub fn to_name(&self) -> String {
+        format!("{}-{}.redb", self.language_code, self.dump_date)
+    }
+
+    /// Create temp name containing all database metadata.
+    pub fn to_tmp_name(&self) -> String {
+        format!("{}-{}.redb.tmp", self.language_code, self.dump_date)
+    }
+}
+
+pub type PageId = u32;
+
+#[derive(Debug, Default)]
+pub struct PageIds(pub Vec<PageId>);
+
+const INCOMING: TableDefinition<PageId, PageIds> = TableDefinition::new("incoming");
+const OUTGOING: TableDefinition<PageId, PageIds> = TableDefinition::new("outgoing");
+const REDIRECTS: TableDefinition<PageId, PageId> = TableDefinition::new("redirects");
 
 #[derive(Debug)]
 pub struct Database {
-    root: sled::Db,
-    incoming: sled::Tree,
-    outgoing: sled::Tree,
-    redirects: sled::Tree,
+    inner: redb::Database,
     pub metadata: Metadata,
 }
 
+pub struct ReadTransaction<'db> {
+    inner: redb::ReadTransaction<'db>,
+}
+
+impl<'db> ReadTransaction<'db> {
+    pub fn open_serve(&'db self) -> Result<ServeTransaction<'db>> {
+        Ok(ServeTransaction {
+            incoming: self.inner.open_table(INCOMING)?,
+            outgoing: self.inner.open_table(OUTGOING)?,
+            redirects: self.inner.open_table(REDIRECTS)?,
+        })
+    }
+}
+
+pub struct WriteTransaction<'db> {
+    inner: redb::WriteTransaction<'db>,
+}
+
+impl<'db> WriteTransaction<'db> {
+    pub fn open_build<'txn>(
+        &'txn self,
+        max_memory_usage: u64,
+    ) -> Result<BuildTransaction<'db, 'txn>> {
+        Ok(BuildTransaction {
+            incoming_table: Mutex::new(self.inner.open_table(INCOMING)?),
+            outgoing_table: Mutex::new(self.inner.open_table(OUTGOING)?),
+            redirects_table: Mutex::new(self.inner.open_table(REDIRECTS)?),
+            incoming_cache: Default::default(),
+            outgoing_cache: Default::default(),
+            redirects_cache: Default::default(),
+            ids: Default::default(),
+            memory_usage: MemoryUsage::new(5)?,
+            max_memory_usage,
+        })
+    }
+
+    pub fn commit(self) -> Result<()> {
+        self.inner.commit()?;
+        Ok(())
+    }
+}
+
+pub struct ServeTransaction<'txn> {
+    incoming: ReadOnlyTable<'txn, PageId, PageIds>,
+    outgoing: ReadOnlyTable<'txn, PageId, PageIds>,
+    redirects: ReadOnlyTable<'txn, PageId, PageId>,
+}
+
+impl<'txn> ServeTransaction<'txn> {
+    pub fn get_incoming_links(&self, target: PageId) -> Result<PageIds> {
+        match self.incoming.get(target)? {
+            Some(res) => Ok(res.value()),
+            None => Ok(PageIds(vec![])),
+        }
+    }
+
+    pub fn get_outgoing_links(&self, source: PageId) -> Result<PageIds> {
+        match self.outgoing.get(source)? {
+            Some(res) => Ok(res.value()),
+            None => Ok(PageIds(vec![])),
+        }
+    }
+
+    pub fn get_redirect(&self, page: PageId) -> Result<Option<PageId>> {
+        Ok(self.redirects.get(page)?.map(|r| r.value()))
+    }
+}
+
+pub struct BuildTransaction<'db, 'txn> {
+    incoming_table: Mutex<Table<'db, 'txn, PageId, PageIds>>,
+    outgoing_table: Mutex<Table<'db, 'txn, PageId, PageIds>>,
+    redirects_table: Mutex<Table<'db, 'txn, PageId, PageId>>,
+    incoming_cache: Mutex<HashMap<PageId, PageIds>>,
+    outgoing_cache: Mutex<HashMap<PageId, PageIds>>,
+    redirects_cache: Mutex<HashMap<PageId, PageId>>,
+    ids: RwLock<HashMap<String, PageId>>,
+    memory_usage: MemoryUsage,
+    max_memory_usage: u64,
+}
+
+impl<'db, 'txn> BuildTransaction<'db, 'txn> {
+    /// Get the page id associated with a page title.
+    pub fn get_id(&self, title: &str) -> Option<PageId> {
+        self.ids.read().unwrap().get(title).copied()
+    }
+
+    /// Store a page title and the corresponding page id.
+    pub fn store_title(&self, title: String, id: PageId) {
+        self.ids.write().unwrap().insert(title, id);
+    }
+
+    /// Store a link from one page's id to another.
+    pub fn insert_link(&self, source: PageId, target: PageId) -> Result<()> {
+        self.incoming_cache
+            .lock()
+            .unwrap()
+            .entry(target)
+            .or_default()
+            .0
+            .push(source);
+        self.outgoing_cache
+            .lock()
+            .unwrap()
+            .entry(source)
+            .or_default()
+            .0
+            .push(target);
+        self.shrink_cache()?;
+        Ok(())
+    }
+
+    /// Store a redirect from one page's id to another.
+    pub fn insert_redirect(&self, source: PageId, target: PageId) -> Result<()> {
+        self.redirects_cache.lock().unwrap().insert(source, target);
+        self.shrink_cache()?;
+        Ok(())
+    }
+
+    /// Shrink cache until below maximum memory usage.
+    fn shrink_cache(&self) -> Result<()> {
+        if self.memory_usage.get() > self.max_memory_usage {
+            self.flush_redirects()?;
+            if self.memory_usage.get() > self.max_memory_usage {
+                self.flush_outgoing()?;
+                if self.memory_usage.get() > self.max_memory_usage {
+                    self.flush_incoming()?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Flush currently cached incoming links to disk.
+    fn flush_incoming(&self) -> Result<()> {
+        let mut incoming_table = self.incoming_table.lock().unwrap();
+        for (target, mut sources) in self.incoming_cache.lock().unwrap().drain() {
+            if let Some(mut old_sources) = incoming_table.get(target)?.map(|r| r.value()) {
+                sources.0.append(&mut old_sources.0);
+            }
+            incoming_table.insert(target, sources)?;
+        }
+        Ok(())
+    }
+
+    /// Flush currently cached incoming links to disk.
+    fn flush_outgoing(&self) -> Result<()> {
+        let mut outgoing_table = self.outgoing_table.lock().unwrap();
+        for (source, mut targets) in self.outgoing_cache.lock().unwrap().drain() {
+            if let Some(mut old_targets) = outgoing_table.get(source)?.map(|r| r.value()) {
+                targets.0.append(&mut old_targets.0);
+            }
+            outgoing_table.insert(source, targets)?;
+        }
+        Ok(())
+    }
+
+    /// Flush currently cached redirects to disk.
+    fn flush_redirects(&self) -> Result<()> {
+        let mut redirects_cache = self.redirects_cache.lock().unwrap();
+        let mut redirects_table = self.redirects_table.lock().unwrap();
+        for (source, target) in redirects_cache.iter() {
+            let source = *source;
+            let mut target = *target;
+            let mut sources: HashSet<PageId> = HashSet::from([source]);
+            loop {
+                if let Some(new_target) = redirects_cache.get(&target) {
+                    if sources.contains(new_target) {
+                        break;
+                    }
+                    sources.insert(target);
+                    target = *new_target;
+                    continue;
+                }
+                if let Some(new_target) = redirects_table.get(target)?.map(|r| r.value()) {
+                    if sources.contains(&new_target) {
+                        break;
+                    }
+                    sources.insert(target);
+                    target = new_target;
+                    continue;
+                }
+                break;
+            }
+            for source in sources {
+                redirects_table.insert(source, target)?;
+            }
+        }
+        redirects_cache.clear();
+        Ok(())
+    }
+
+    /// Flush all cached items to disk and close.
+    pub fn flush(self) -> Result<()> {
+        self.flush_redirects()?;
+        self.flush_outgoing()?;
+        self.flush_incoming()?;
+        Ok(())
+    }
+}
+
 impl Database {
-    pub fn open(path: &PathBuf, cache_capacity: u64) -> Result<Self> {
-        let root = sled::Config::default()
-            .cache_capacity(cache_capacity)
-            .path(path)
-            .create_new(false)
-            .open()?;
+    pub fn open(path: &Path) -> Result<Self> {
+        let filename = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .ok_or(anyhow!("database path '{}' is not valid", path.display()))?;
+        let inner = redb::Database::create(path)?;
+        let metadata = Metadata::from_name(filename)?;
+        Ok(Self { inner, metadata })
+    }
 
-        let metadata = bincode::deserialize(
-            &root
-                .get(METADATA_KEY)?
-                .ok_or_else(|| ErrorKind::MissingMetadata(path.clone()))?,
-        )?;
-
-        Ok(Self {
-            incoming: root.open_tree(INCOMING_TREE_NAME)?,
-            outgoing: root.open_tree(OUTGOING_TREE_NAME)?,
-            redirects: root.open_tree(REDIRECTS_TREE_NAME)?,
-            metadata,
-            root,
+    pub fn begin_read(&self) -> Result<ReadTransaction<'_>> {
+        Ok(ReadTransaction {
+            inner: self.inner.begin_read()?,
         })
     }
 
-    pub fn create(
-        path: &PathBuf,
-        dump: &dump::Dump,
-        cache_capacity: u64,
-        thread_count: usize,
-    ) -> Result<Self> {
-        let root = sled::Config::default()
-            .cache_capacity(cache_capacity)
-            .path(path)
-            .create_new(true)
-            .open()?;
-
-        let db = Self {
-            incoming: root.open_tree(INCOMING_TREE_NAME)?,
-            outgoing: root.open_tree(OUTGOING_TREE_NAME)?,
-            redirects: root.open_tree(REDIRECTS_TREE_NAME)?,
-            metadata: dump.metadata.clone(),
-            root,
-        };
-
-        let progress = MultiProgress::new();
-
-        let step = progress.add(progress::spinner("Parsing page dump"));
-        let titles = Arc::new(dump.parse_page_dump_file(thread_count, progress.clone())?);
-        step.finish();
-
-        let step = progress.add(progress::spinner("Parsing redirects dump"));
-        let redirects =
-            Arc::new(dump.parse_redir_dump_file(thread_count, titles.clone(), progress.clone())?);
-        step.finish();
-
-        let step = progress.add(progress::spinner("Parsing links dump"));
-        let links =
-            dump.parse_link_dump_file(thread_count, titles, redirects.clone(), progress.clone())?;
-        step.finish();
-
-        let step = progress.add(progress::spinner("Ingesting redirects into database"));
-        let bar = progress.add(progress::unit(redirects.len() as u64));
-        for (source, target) in redirects.as_ref() {
-            db.redirects
-                .insert(source.to_le_bytes(), &target.to_le_bytes())?;
-            bar.inc(1);
-        }
-        bar.finish();
-        step.finish();
-
-        let step = progress.add(progress::spinner("Ingesting incoming links into database"));
-        let bar = progress.add(progress::unit(links.incoming.len() as u64));
-        for (target, sources) in links.incoming {
-            db.incoming.insert(
-                target.to_le_bytes(),
-                sources
-                    .iter()
-                    .flat_map(|id| id.to_le_bytes())
-                    .collect::<Vec<u8>>(),
-            )?;
-            bar.inc(1);
-        }
-        bar.finish();
-        step.finish();
-
-        let step = progress.add(progress::spinner("Ingesting outgoing links into database"));
-        let bar = progress.add(progress::unit(links.outgoing.len() as u64));
-        for (source, targets) in links.outgoing {
-            db.outgoing.insert(
-                source.to_le_bytes(),
-                targets
-                    .iter()
-                    .flat_map(|id| id.to_le_bytes())
-                    .collect::<Vec<u8>>(),
-            )?;
-            bar.inc(1);
-        }
-        bar.finish();
-        step.finish();
-
-        db.root
-            .insert(METADATA_KEY, bincode::serialize(&db.metadata)?)?;
-
-        Ok(db)
-    }
-
-    pub fn size(&self) -> u64 {
-        self.root.size_on_disk().unwrap_or(0)
-    }
-
-    pub fn get_shortest_paths(&self, source: PageId, target: PageId) -> Result<Paths> {
-        let (source, source_is_redirect) = {
-            (self.get_redirect(source)?).map_or((source, false), |new_source| (new_source, true))
-        };
-
-        let (target, target_is_redirect) = {
-            (self.get_redirect(target)?).map_or((target, false), |new_target| (new_target, true))
-        };
-
-        let mut forward_parents: HashMap<PageId, HashSet<PageId>> =
-            HashMap::from([(source, HashSet::new())]);
-        let mut backward_parents: HashMap<PageId, HashSet<PageId>> =
-            HashMap::from([(target, HashSet::new())]);
-        let mut forward_queue = VecDeque::from([source]);
-        let mut backward_queue = VecDeque::from([target]);
-        let mut overlapping: HashSet<PageId> = HashSet::new();
-        let mut forward_depth = 0;
-        let mut backward_depth = 0;
-
-        if source == target {
-            overlapping.insert(source);
-        }
-
-        while overlapping.is_empty() && !forward_queue.is_empty() && !backward_queue.is_empty() {
-            let mut new_parents: HashMap<PageId, HashSet<PageId>> = HashMap::new();
-            if forward_queue.len() < backward_queue.len() {
-                for _ in 0..forward_queue.len() {
-                    let page = forward_queue.pop_front().ok_or_else(|| {
-                        ErrorKind::ShortestPathsAlgorithm("empty forward queue".to_string())
-                    })?;
-                    for out in self.get_links(page, false)? {
-                        if !forward_parents.contains_key(&out) {
-                            forward_queue.push_back(out);
-                            if let Some(set) = new_parents.get_mut(&out) {
-                                set.insert(page);
-                            } else {
-                                new_parents.insert(out, HashSet::from([page]));
-                            }
-                            if backward_parents.contains_key(&out) {
-                                overlapping.insert(out);
-                            }
-                        }
-                    }
-                }
-                for (child, parents) in new_parents {
-                    for parent in parents {
-                        forward_parents
-                            .entry(child)
-                            .and_modify(|parents| {
-                                parents.insert(parent);
-                            })
-                            .or_insert(HashSet::from([parent]));
-                    }
-                }
-                forward_depth += 1;
-            } else {
-                for _ in 0..backward_queue.len() {
-                    let page = backward_queue.pop_front().ok_or_else(|| {
-                        ErrorKind::ShortestPathsAlgorithm("empty backward queue".to_string())
-                    })?;
-                    for inc in self.get_links(page, true)? {
-                        if !backward_parents.contains_key(&inc) {
-                            backward_queue.push_back(inc);
-                            if let Some(parents) = new_parents.get_mut(&inc) {
-                                parents.insert(page);
-                            } else {
-                                new_parents.insert(inc, HashSet::from([page]));
-                            }
-                            if forward_parents.contains_key(&inc) {
-                                overlapping.insert(inc);
-                            }
-                        }
-                    }
-                }
-                for (child, parents) in new_parents {
-                    for parent in parents {
-                        backward_parents
-                            .entry(child)
-                            .and_modify(|parents| {
-                                parents.insert(parent);
-                            })
-                            .or_insert(HashSet::from([parent]));
-                    }
-                }
-                backward_depth += 1;
-            }
-        }
-
-        fn extract_paths(
-            page: PageId,
-            counts: &mut HashMap<PageId, u32>,
-            forward: bool,
-            parents: &HashMap<PageId, HashSet<PageId>>,
-            links: &mut HashMap<PageId, HashSet<PageId>>,
-        ) -> Result<u32> {
-            if let Some(direct_parents) = parents.get(&page) {
-                if !direct_parents.is_empty() {
-                    let mut occurred: HashSet<PageId> = HashSet::new();
-                    for parent in direct_parents {
-                        if occurred.insert(*parent) {
-                            if forward {
-                                links
-                                    .entry(page)
-                                    .and_modify(|links| {
-                                        links.insert(*parent);
-                                    })
-                                    .or_insert(HashSet::from([*parent]));
-                            } else {
-                                links
-                                    .entry(*parent)
-                                    .and_modify(|links| {
-                                        links.insert(page);
-                                    })
-                                    .or_insert(HashSet::from([page]));
-                            }
-                            let parent_count = {
-                                let memoized = *counts.get(parent).unwrap_or(&0);
-                                if memoized == 0 {
-                                    extract_paths(*parent, counts, forward, parents, links)
-                                } else {
-                                    Ok(memoized)
-                                }
-                            }?;
-                            *counts.entry(page).or_default() += parent_count;
-                        }
-                    }
-                    return Ok(*counts.get(&page).ok_or_else(|| {
-                        ErrorKind::ShortestPathsAlgorithm("unmemoized path count".to_string())
-                    })?);
-                }
-            }
-            Ok(1)
-        }
-
-        let mut total_path_count = 0;
-        let mut forward_path_counts: HashMap<PageId, u32> = HashMap::new();
-        let mut backward_path_counts: HashMap<PageId, u32> = HashMap::new();
-        let mut links: HashMap<PageId, HashSet<PageId>> = HashMap::new();
-        for overlap in overlapping {
-            let forward_path_count = extract_paths(
-                overlap,
-                &mut forward_path_counts,
-                true,
-                &backward_parents,
-                &mut links,
-            )?;
-            let backward_path_count = extract_paths(
-                overlap,
-                &mut backward_path_counts,
-                false,
-                &forward_parents,
-                &mut links,
-            )?;
-            total_path_count += forward_path_count * backward_path_count;
-        }
-
-        Ok(Paths {
-            source,
-            source_is_redirect,
-            target,
-            target_is_redirect,
-            links,
-            language_code: self.metadata.language_code.clone(),
-            dump_date: self.metadata.dump_date.clone(),
-            path_lengths: if total_path_count != 0 {
-                forward_depth + backward_depth
-            } else {
-                0
-            },
-            path_count: total_path_count,
+    pub fn begin_write(&self) -> Result<WriteTransaction<'_>> {
+        Ok(WriteTransaction {
+            inner: self.inner.begin_write()?,
         })
     }
 
-    fn get_redirect(&self, id: PageId) -> Result<Option<PageId>> {
-        if let Some(data) = self.redirects.get(PageId::to_le_bytes(id))? {
-            let data: [u8; mem::size_of::<PageId>()] = data
-                .as_ref()
-                .try_into()
-                .map_err(|_| ErrorKind::InvalidBytes("invalid redirect length".into()))?;
-            Ok(Some(PageId::from_le_bytes(data)))
-        } else {
-            Ok(None)
-        }
+    pub fn compact(&mut self) -> Result<()> {
+        self.inner.compact()?;
+        Ok(())
+    }
+}
+
+impl RedbValue for PageIds {
+    type SelfType<'a> = Self;
+    type AsBytes<'a> = Vec<u8>;
+
+    fn fixed_width() -> Option<usize> {
+        None
     }
 
-    fn get_links(&self, id: PageId, incoming: bool) -> Result<Vec<PageId>> {
-        let tree = if incoming {
-            &self.incoming
-        } else {
-            &self.outgoing
-        };
+    fn type_name() -> TypeName {
+        TypeName::new("PageIds")
+    }
 
-        if let Some(data) = tree.get(PageId::to_le_bytes(id))? {
-            if data.len() % mem::size_of::<PageId>() == 0 {
-                Ok(data
-                    .chunks(mem::size_of::<PageId>())
-                    .map(|bs| PageId::from_le_bytes(bs.try_into().unwrap()))
-                    .collect())
-            } else {
-                Err(ErrorKind::InvalidBytes("invalid links length".into()).into())
-            }
-        } else {
-            Ok(Default::default())
-        }
+    fn as_bytes<'a, 'b: 'a>(value: &'a Self::SelfType<'b>) -> Self::AsBytes<'a>
+    where
+        Self: 'a,
+        Self: 'b,
+    {
+        value
+            .0
+            .iter()
+            .dedup()
+            .flat_map(|id| id.to_le_bytes())
+            .collect()
+    }
+
+    fn from_bytes<'a>(data: &'a [u8]) -> Self::SelfType<'a>
+    where
+        Self: 'a,
+    {
+        PageIds(
+            data.chunks(mem::size_of::<PageId>())
+                .map(|bs| PageId::from_le_bytes(bs.try_into().unwrap()))
+                .collect(),
+        )
     }
 }

@@ -1,25 +1,11 @@
 use indicatif::{ProgressBar, ProgressStyle};
-use lazy_static::lazy_static;
 use std::{io::Read, time::Duration};
 
 const REFRESH_INTERVAL_MS: u64 = 500;
 
-lazy_static! {
-    static ref SPINNER_STYLE: ProgressStyle =
-        ProgressStyle::with_template("[{elapsed_precise}] {msg} {spinner}").unwrap();
-    static ref BYTE_STYLE: ProgressStyle =
-        ProgressStyle::with_template(" ➔  [{bar}] {percent}% ({bytes_per_sec})")
-            .unwrap()
-            .progress_chars("##-");
-    static ref UNIT_STYLE: ProgressStyle =
-        ProgressStyle::with_template(" ➔  [{bar}] {percent}% ({per_sec})")
-            .unwrap()
-            .progress_chars("##-");
-}
-
 pub fn spinner(msg: &str) -> ProgressBar {
     let result = ProgressBar::new_spinner()
-        .with_style(SPINNER_STYLE.clone())
+        .with_style(ProgressStyle::with_template("[{elapsed_precise}] {msg} {spinner}").unwrap())
         .with_message(msg.to_string());
     result.enable_steady_tick(Duration::from_millis(REFRESH_INTERVAL_MS));
     result
@@ -28,18 +14,19 @@ pub fn spinner(msg: &str) -> ProgressBar {
 pub fn byte(msg: &str, current_bytes: u64, total_bytes: u64) -> ProgressBar {
     let result = ProgressBar::new(total_bytes)
         .with_position(current_bytes)
-        .with_style(BYTE_STYLE.clone())
+        .with_style(
+            ProgressStyle::with_template(" ➔  [{bar}] {percent}% ({bytes_per_sec})")
+                .unwrap()
+                .progress_chars("##-"),
+        )
         .with_message(msg.to_string());
     result.enable_steady_tick(Duration::from_millis(REFRESH_INTERVAL_MS));
     result
 }
 
-pub fn unit(total: u64) -> ProgressBar {
-    let result = ProgressBar::new(total).with_style(UNIT_STYLE.clone());
-    result.enable_steady_tick(Duration::from_millis(REFRESH_INTERVAL_MS));
-    result
-}
-
+/// Proxy of a reader that acts as a way to keep track of the number of bytes
+/// already read in a progress bar.
+#[derive(Debug)]
 pub struct Reader<R: Read> {
     inner_reader: R,
     progress: ProgressBar,

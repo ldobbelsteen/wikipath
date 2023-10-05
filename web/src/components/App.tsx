@@ -1,4 +1,3 @@
-import "../index.css";
 import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Toaster, toast } from "react-hot-toast";

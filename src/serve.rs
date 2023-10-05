@@ -1,7 +1,5 @@
-use crate::{
-    database::{Database, PageId},
-    dump::Metadata,
-};
+use crate::database::{Database, PageId};
+use anyhow::{bail, Result};
 use axum::{
     body::{self, Full},
     extract::{Extension, Query},
@@ -10,48 +8,36 @@ use axum::{
     routing::get,
     Json, Router, Server,
 };
-use error_chain::error_chain;
 use futures::try_join;
-use hashbrown::HashMap;
 use include_dir::{include_dir, Dir};
 use serde::Deserialize;
-use std::{fs, net::SocketAddr, path::Path, sync::Arc};
+use std::{collections::HashMap, fs, net::SocketAddr, path::Path, sync::Arc};
 
 static WEB: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/web/dist");
 
-error_chain! {
-    foreign_links {
-        Hyper(hyper::Error);
-    }
-
-    errors {
-        SocketBindError(port: u16) {
-            display("could bind to neither ipv4 nor ipv6 on port {}", port)
-        }
-    }
-}
-
 type Databases = Arc<HashMap<String, Database>>;
 
-pub async fn serve(databases_dir: &Path, listening_port: u16, cache_capacity: u64) -> Result<()> {
+pub async fn serve(databases_dir: &Path, listening_port: u16) -> Result<()> {
     let databases: Databases = {
         let mut result = HashMap::new();
-        if let Ok(entries) = fs::read_dir(databases_dir) {
-            entries.for_each(|entry| {
-                if let Ok(entry) = entry {
-                    let path = entry.path();
-                    if path.is_dir() {
-                        println!("[INFO] opening {}...", path.display());
-                        match Database::open(&path, cache_capacity) {
-                            Ok(database) => {
-                                result
-                                    .insert(database.metadata.language_code.to_string(), database);
-                            }
-                            Err(err) => eprintln!("[WARNING] skipping database: {}", err),
+        for entry in fs::read_dir(databases_dir)? {
+            let path = entry?.path();
+            if let Some(ext) = path.extension() {
+                if ext == "redb" {
+                    println!("[INFO] opening database '{}'...", path.display());
+                    match Database::open(&path) {
+                        Ok(database) => {
+                            result.insert(database.metadata.language_code.to_string(), database);
+                        }
+                        Err(err) => {
+                            println!("[WARNING] skipping database '{}': {}", path.display(), err);
                         }
                     }
                 }
-            });
+            }
+        }
+        if result.is_empty() {
+            bail!("no databases found");
         }
         Arc::new(result)
     };
@@ -60,11 +46,11 @@ pub async fn serve(databases_dir: &Path, listening_port: u16, cache_capacity: u6
         let list = databases
             .values()
             .map(|db| &db.metadata)
-            .collect::<Vec<&Metadata>>();
+            .collect::<Vec<_>>();
         Json(list).into_response()
     }
 
-    #[derive(Deserialize)]
+    #[derive(Debug, Deserialize)]
     struct ShortestPathsQuery {
         language: String,
         source: PageId,
@@ -83,7 +69,7 @@ pub async fn serve(databases_dir: &Path, listening_port: u16, cache_capacity: u6
                         StatusCode::INTERNAL_SERVER_ERROR,
                         "unexpected database error",
                     );
-                    eprintln!("[ERROR] {}", e);
+                    eprintln!("[ERROR] failed getting shortest paths: {}", e);
                     response.into_response()
                 }
             }
@@ -136,15 +122,18 @@ pub async fn serve(databases_dir: &Path, listening_port: u16, cache_capacity: u6
             try_join!(ipv4, ipv6)?;
         }
         (Ok(ipv4), Err(ipv6)) => {
-            eprintln!("[WARNING] could not bind to IPv6 address: {}", ipv6);
+            println!("[WARNING] could not bind to IPv6 address: {}", ipv6);
             ipv4.await?;
         }
         (Err(ipv4), Ok(ipv6)) => {
-            eprintln!("[WARNING] could not bind to IPv4 address: {}", ipv4);
+            println!("[WARNING] could not bind to IPv4 address: {}", ipv4);
             ipv6.await?;
         }
         (Err(_), Err(_)) => {
-            return Err(ErrorKind::SocketBindError(listening_port).into());
+            bail!(
+                "could bind to neither ipv4 nor ipv6 on port {}",
+                listening_port
+            );
         }
     };
 
