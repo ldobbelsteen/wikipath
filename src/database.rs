@@ -1,12 +1,11 @@
 use anyhow::{anyhow, Result};
 use hashbrown::{HashMap, HashSet};
-use itertools::Itertools;
-use redb::{ReadOnlyTable, ReadableTable, RedbValue, Table, TableDefinition, TypeName};
+use redb::{ReadOnlyTable, ReadableTable, Table, TableDefinition};
 use regex::Regex;
 use serde::Serialize;
 use std::path::Path;
 use std::sync::{Mutex, RwLock};
-use std::{mem, vec};
+use std::vec;
 
 use crate::memory::MemoryUsage;
 
@@ -47,11 +46,8 @@ impl Metadata {
 
 pub type PageId = u32;
 
-#[derive(Debug, Default)]
-pub struct PageIds(pub Vec<PageId>);
-
-const INCOMING: TableDefinition<PageId, PageIds> = TableDefinition::new("incoming");
-const OUTGOING: TableDefinition<PageId, PageIds> = TableDefinition::new("outgoing");
+const INCOMING: TableDefinition<PageId, Vec<PageId>> = TableDefinition::new("incoming");
+const OUTGOING: TableDefinition<PageId, Vec<PageId>> = TableDefinition::new("outgoing");
 const REDIRECTS: TableDefinition<PageId, PageId> = TableDefinition::new("redirects");
 
 #[derive(Debug)]
@@ -103,23 +99,23 @@ impl<'db> WriteTransaction<'db> {
 }
 
 pub struct ServeTransaction<'txn> {
-    incoming: ReadOnlyTable<'txn, PageId, PageIds>,
-    outgoing: ReadOnlyTable<'txn, PageId, PageIds>,
+    incoming: ReadOnlyTable<'txn, PageId, Vec<PageId>>,
+    outgoing: ReadOnlyTable<'txn, PageId, Vec<PageId>>,
     redirects: ReadOnlyTable<'txn, PageId, PageId>,
 }
 
 impl<'txn> ServeTransaction<'txn> {
-    pub fn get_incoming_links(&self, target: PageId) -> Result<PageIds> {
+    pub fn get_incoming_links(&self, target: PageId) -> Result<Vec<PageId>> {
         match self.incoming.get(target)? {
             Some(res) => Ok(res.value()),
-            None => Ok(PageIds(vec![])),
+            None => Ok(vec![]),
         }
     }
 
-    pub fn get_outgoing_links(&self, source: PageId) -> Result<PageIds> {
+    pub fn get_outgoing_links(&self, source: PageId) -> Result<Vec<PageId>> {
         match self.outgoing.get(source)? {
             Some(res) => Ok(res.value()),
-            None => Ok(PageIds(vec![])),
+            None => Ok(vec![]),
         }
     }
 
@@ -129,11 +125,11 @@ impl<'txn> ServeTransaction<'txn> {
 }
 
 pub struct BuildTransaction<'db, 'txn> {
-    incoming_table: Mutex<Table<'db, 'txn, PageId, PageIds>>,
-    outgoing_table: Mutex<Table<'db, 'txn, PageId, PageIds>>,
+    incoming_table: Mutex<Table<'db, 'txn, PageId, Vec<PageId>>>,
+    outgoing_table: Mutex<Table<'db, 'txn, PageId, Vec<PageId>>>,
     redirects_table: Mutex<Table<'db, 'txn, PageId, PageId>>,
-    incoming_cache: Mutex<HashMap<PageId, PageIds>>,
-    outgoing_cache: Mutex<HashMap<PageId, PageIds>>,
+    incoming_cache: Mutex<HashMap<PageId, Vec<PageId>>>,
+    outgoing_cache: Mutex<HashMap<PageId, Vec<PageId>>>,
     redirects_cache: Mutex<HashMap<PageId, PageId>>,
     ids: RwLock<HashMap<String, PageId>>,
     memory_usage: MemoryUsage,
@@ -158,14 +154,12 @@ impl<'db, 'txn> BuildTransaction<'db, 'txn> {
             .unwrap()
             .entry(target)
             .or_default()
-            .0
             .push(source);
         self.outgoing_cache
             .lock()
             .unwrap()
             .entry(source)
             .or_default()
-            .0
             .push(target);
         self.shrink_cache()?;
         Ok(())
@@ -197,7 +191,7 @@ impl<'db, 'txn> BuildTransaction<'db, 'txn> {
         let mut incoming_table = self.incoming_table.lock().unwrap();
         for (target, mut sources) in self.incoming_cache.lock().unwrap().drain() {
             if let Some(mut old_sources) = incoming_table.get(target)?.map(|r| r.value()) {
-                sources.0.append(&mut old_sources.0);
+                sources.append(&mut old_sources);
             }
             incoming_table.insert(target, sources)?;
         }
@@ -209,7 +203,7 @@ impl<'db, 'txn> BuildTransaction<'db, 'txn> {
         let mut outgoing_table = self.outgoing_table.lock().unwrap();
         for (source, mut targets) in self.outgoing_cache.lock().unwrap().drain() {
             if let Some(mut old_targets) = outgoing_table.get(source)?.map(|r| r.value()) {
-                targets.0.append(&mut old_targets.0);
+                targets.append(&mut old_targets);
             }
             outgoing_table.insert(source, targets)?;
         }
@@ -286,42 +280,5 @@ impl Database {
     pub fn compact(&mut self) -> Result<()> {
         self.inner.compact()?;
         Ok(())
-    }
-}
-
-impl RedbValue for PageIds {
-    type SelfType<'a> = Self;
-    type AsBytes<'a> = Vec<u8>;
-
-    fn fixed_width() -> Option<usize> {
-        None
-    }
-
-    fn type_name() -> TypeName {
-        TypeName::new("PageIds")
-    }
-
-    fn as_bytes<'a, 'b: 'a>(value: &'a Self::SelfType<'b>) -> Self::AsBytes<'a>
-    where
-        Self: 'a,
-        Self: 'b,
-    {
-        value
-            .0
-            .iter()
-            .dedup()
-            .flat_map(|id| id.to_le_bytes())
-            .collect()
-    }
-
-    fn from_bytes<'a>(data: &'a [u8]) -> Self::SelfType<'a>
-    where
-        Self: 'a,
-    {
-        PageIds(
-            data.chunks(mem::size_of::<PageId>())
-                .map(|bs| PageId::from_le_bytes(bs.try_into().unwrap()))
-                .collect(),
-        )
     }
 }
