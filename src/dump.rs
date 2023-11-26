@@ -7,7 +7,7 @@ use indicatif::MultiProgress;
 use regex::Regex;
 use ring::digest;
 use std::{
-    fs::{self, File},
+    fs::File,
     io::{BufReader, Read, Write},
     path::{Path, PathBuf},
     str,
@@ -100,7 +100,7 @@ impl Dump {
         files: ExternalDumpFiles,
         progress: MultiProgress,
     ) -> Result<Self> {
-        fs::create_dir_all(dumps_dir)?;
+        std::fs::create_dir_all(dumps_dir)?;
         let step = progress.add(progress::spinner("Downloading latest dump"));
         let (pages, redirects, pagelinks) = try_join!(
             Self::download_external_file(dumps_dir, &files.pages, progress.clone()),

@@ -260,6 +260,9 @@ impl Database {
             .file_name()
             .and_then(|s| s.to_str())
             .ok_or(anyhow!("database path '{}' is not valid", path.display()))?;
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
         let inner = redb::Database::create(path)?;
         let metadata = Metadata::from_name(filename)?;
         Ok(Self { inner, metadata })
