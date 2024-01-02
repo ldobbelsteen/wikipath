@@ -110,7 +110,8 @@ pub async fn serve(databases_dir: &Path, listening_port: u16) -> Result<()> {
         .layer(Extension(databases))
         .fallback(web_files);
 
-    let listener = TcpListener::bind(format!("0.0.0.0:{listening_port}")).await?;
+    let listener = TcpListener::bind(format!(":::{listening_port}")).await?;
+    println!("[INFO] Listening on port {listening_port}...");
     axum::serve(listener, router).await?;
 
     Ok(())
