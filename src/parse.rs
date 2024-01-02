@@ -24,10 +24,10 @@ pub struct Chunk {
 impl Dump {
     pub fn parse_dump_file<'a, F>(
         path: &Path,
-        regex: Regex,
+        regex: &Regex,
         max_captures_size: usize,
         consume_captures: F,
-        progress: MultiProgress,
+        progress: &MultiProgress,
         thread_count: usize,
     ) -> Result<()>
     where
@@ -60,8 +60,7 @@ impl Dump {
                                 if let Err(e) = consume_capture(captures) {
                                     progress
                                         .println(format!(
-                                            "[WARNING] error while consuming capture: {}",
-                                            e
+                                            "[WARNING] error while consuming capture: {e}",
                                         ))
                                         .unwrap(); // Assume print errors never happen.
                                 }
@@ -98,7 +97,7 @@ impl Dump {
             };
 
             // Populate already handled chunks with new data.
-            for new_chunk in stale_rx.iter() {
+            for new_chunk in &stale_rx {
                 let mut new_chunk = new_chunk.unwrap(); // Unwrap, since parser only sends none when we have done so
                 let overlap_start = if current_chunk.end >= max_captures_size {
                     current_chunk.end - max_captures_size
@@ -141,12 +140,12 @@ impl Dump {
     pub fn parse_page(
         &self,
         build: Arc<BuildTransaction>,
-        progress: MultiProgress,
+        progress: &MultiProgress,
         thread_count: usize,
     ) -> Result<()> {
         Self::parse_dump_file(
             self.pages.as_path(),
-            Regex::new(
+            &Regex::new(
                 r"\(([0-9]{1,10}),0,'(.{1,255}?)',[01],[01],0.[0-9]{1,32}?,'[0-9]{14}',(?:'[0-9]{14}'|NULL),[0-9]{1,10},[0-9]{1,10},'wikitext',NULL\)",
             )?, // https://www.mediawiki.org/wiki/Manual:Page_table
             1 + 10 + 4 + 255 + 8 + 32 + 2 + 14 + 3 + 14 + 2 + 10 + 1 + 10 + 17,
@@ -171,12 +170,12 @@ impl Dump {
     pub fn parse_redir(
         &self,
         build: Arc<BuildTransaction>,
-        progress: MultiProgress,
+        progress: &MultiProgress,
         thread_count: usize,
     ) -> Result<()> {
         Self::parse_dump_file(
             self.redirects.as_path(),
-            Regex::new(r"\(([0-9]{1,10}),0,'(.{1,255}?)','.{0,32}?','.{0,255}?'\)")?, // https://www.mediawiki.org/wiki/Manual:Redirect_table
+            &Regex::new(r"\(([0-9]{1,10}),0,'(.{1,255}?)','.{0,32}?','.{0,255}?'\)")?, // https://www.mediawiki.org/wiki/Manual:Redirect_table
             1 + 10 + 4 + 255 + 3 + 32 + 3 + 255 + 2,
             move |caps| {
                 let source: PageId = {
@@ -205,12 +204,12 @@ impl Dump {
     pub fn parse_link(
         &self,
         build: Arc<BuildTransaction>,
-        progress: MultiProgress,
+        progress: &MultiProgress,
         thread_count: usize,
     ) -> Result<()> {
         Self::parse_dump_file(
             self.pagelinks.as_path(),
-            Regex::new(r"\(([0-9]{1,10}),0,'(.{1,255}?)',0,(?:([0-9]{1,20})|NULL)\)")?, // https://www.mediawiki.org/wiki/Manual:Pagelinks_table
+            &Regex::new(r"\(([0-9]{1,10}),0,'(.{1,255}?)',0,(?:([0-9]{1,20})|NULL)\)")?, // https://www.mediawiki.org/wiki/Manual:Pagelinks_table
             1 + 10 + 4 + 255 + 4,
             move |caps| {
                 let source: PageId = {

@@ -4,14 +4,14 @@ use std::{
     thread,
     time::Duration,
 };
-use sysinfo::{ProcessExt, System, SystemExt};
+use sysinfo::System;
 
 #[derive(Clone)]
-pub struct MemoryUsage {
+pub struct MemUsage {
     usage: Arc<RwLock<u64>>,
 }
 
-impl MemoryUsage {
+impl MemUsage {
     pub fn new(update_interval_secs: u64) -> Result<Self> {
         let mut system = System::new();
         let pid = sysinfo::get_current_pid().map_err(|e| anyhow!(e))?;
@@ -26,7 +26,7 @@ impl MemoryUsage {
             thread::sleep(interval);
         });
 
-        Ok(MemoryUsage { usage })
+        Ok(MemUsage { usage })
     }
 
     pub fn get(&self) -> u64 {

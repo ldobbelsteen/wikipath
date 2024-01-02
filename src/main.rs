@@ -1,3 +1,5 @@
+#![warn(clippy::pedantic)]
+
 use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
 
@@ -59,9 +61,7 @@ async fn main() {
             memory,
         } => {
             let databases_dir = Path::new(&databases);
-            let dumps_dir = dumps
-                .map(PathBuf::from)
-                .unwrap_or(std::env::temp_dir().join("wikipath"));
+            let dumps_dir = dumps.map_or(std::env::temp_dir().join("wikipath"), PathBuf::from);
             let thread_count = threads.unwrap_or_else(num_cpus::get);
             let max_memory_usage = memory * 1024 * 1024 * 1024;
             for language_code in languages.split(',') {
@@ -74,7 +74,7 @@ async fn main() {
                 )
                 .await
                 {
-                    eprintln!("[FATAL] {}", e);
+                    eprintln!("[FATAL] {e}");
                     std::process::exit(1);
                 }
             }
@@ -82,7 +82,7 @@ async fn main() {
         Action::Serve { databases, port } => {
             let databases_dir = Path::new(&databases);
             if let Err(e) = serve::serve(databases_dir, port).await {
-                eprintln!("[FATAL] {}", e);
+                eprintln!("[FATAL] {e}");
                 std::process::exit(1);
             }
         }

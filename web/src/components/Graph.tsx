@@ -52,8 +52,9 @@ export const Graph = (props: {
     }
 
     /** Show message based on graph content */
-    let message = `Found ${paths.pathCount} ${paths.pathCount === 1 ? "path" : "paths"
-      } of degree ${paths.pathLengths}.`;
+    let message = `Found ${paths.pathCount} ${
+      paths.pathCount === 1 ? "path" : "paths"
+    } of degree ${paths.pathLengths}.`;
     if (paths.pathCount > paths.paths.length) {
       message += ` Only ${paths.paths.length} of them are shown below.`;
     }

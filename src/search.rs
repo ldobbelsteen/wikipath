@@ -18,8 +18,55 @@ pub struct Paths {
 }
 
 impl Database {
+    #[allow(clippy::too_many_lines)]
     /// Get the shortest paths between two pages.
     pub fn get_shortest_paths(&self, source: PageId, target: PageId) -> Result<Paths> {
+        fn extract_paths(
+            page: PageId,
+            counts: &mut HashMap<PageId, u32>,
+            forward: bool,
+            parents: &HashMap<PageId, HashSet<PageId>>,
+            links: &mut HashMap<PageId, HashSet<PageId>>,
+        ) -> Result<u32> {
+            if let Some(direct_parents) = parents.get(&page) {
+                if !direct_parents.is_empty() {
+                    let mut occurred: HashSet<PageId> = HashSet::new();
+                    for parent in direct_parents {
+                        if occurred.insert(*parent) {
+                            if forward {
+                                links
+                                    .entry(page)
+                                    .and_modify(|links| {
+                                        links.insert(*parent);
+                                    })
+                                    .or_insert(HashSet::from([*parent]));
+                            } else {
+                                links
+                                    .entry(*parent)
+                                    .and_modify(|links| {
+                                        links.insert(page);
+                                    })
+                                    .or_insert(HashSet::from([page]));
+                            }
+                            let parent_count = {
+                                let memoized = *counts.get(parent).unwrap_or(&0);
+                                if memoized == 0 {
+                                    extract_paths(*parent, counts, forward, parents, links)
+                                } else {
+                                    Ok(memoized)
+                                }
+                            }?;
+                            *counts.entry(page).or_default() += parent_count;
+                        }
+                    }
+                    return Ok(*counts
+                        .get(&page)
+                        .ok_or(anyhow!("unmemoized path count in path extraction"))?);
+                }
+            }
+            Ok(1)
+        }
+
         let txn = self.begin_read()?;
         let tables = txn.open_serve()?;
 
@@ -108,52 +155,6 @@ impl Database {
                 }
                 backward_depth += 1;
             }
-        }
-
-        fn extract_paths(
-            page: PageId,
-            counts: &mut HashMap<PageId, u32>,
-            forward: bool,
-            parents: &HashMap<PageId, HashSet<PageId>>,
-            links: &mut HashMap<PageId, HashSet<PageId>>,
-        ) -> Result<u32> {
-            if let Some(direct_parents) = parents.get(&page) {
-                if !direct_parents.is_empty() {
-                    let mut occurred: HashSet<PageId> = HashSet::new();
-                    for parent in direct_parents {
-                        if occurred.insert(*parent) {
-                            if forward {
-                                links
-                                    .entry(page)
-                                    .and_modify(|links| {
-                                        links.insert(*parent);
-                                    })
-                                    .or_insert(HashSet::from([*parent]));
-                            } else {
-                                links
-                                    .entry(*parent)
-                                    .and_modify(|links| {
-                                        links.insert(page);
-                                    })
-                                    .or_insert(HashSet::from([page]));
-                            }
-                            let parent_count = {
-                                let memoized = *counts.get(parent).unwrap_or(&0);
-                                if memoized == 0 {
-                                    extract_paths(*parent, counts, forward, parents, links)
-                                } else {
-                                    Ok(memoized)
-                                }
-                            }?;
-                            *counts.entry(page).or_default() += parent_count;
-                        }
-                    }
-                    return Ok(*counts
-                        .get(&page)
-                        .ok_or(anyhow!("unmemoized path count in path extraction"))?);
-                }
-            }
-            Ok(1)
         }
 
         let mut total_path_count = 0;

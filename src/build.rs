@@ -22,7 +22,7 @@ pub async fn build(
     max_memory_usage: u64,
 ) -> Result<PathBuf> {
     let start = Instant::now();
-    println!("\n[INFO] Building '{}' database...", language_code);
+    println!("\n[INFO] Building '{language_code}' database...");
     let progress = MultiProgress::new();
 
     // Get the info of the latest Wikipedia database dump.
@@ -44,17 +44,17 @@ pub async fn build(
 
     // Parse the page dump, extracting all pages' IDs and titles.
     let step = progress.add(progress::spinner("Parsing page dump"));
-    dump.parse_page(build.clone(), progress.clone(), thread_count)?;
+    dump.parse_page(build.clone(), &progress, thread_count)?;
     step.finish();
 
     // Parse the redirect dump, extracting all redirects from page to page.
     let step = progress.add(progress::spinner("Parsing redirects dump"));
-    dump.parse_redir(build.clone(), progress.clone(), thread_count)?;
+    dump.parse_redir(build.clone(), &progress, thread_count)?;
     step.finish();
 
     // Parse the pagelink dump, extracting all links from page to page.
     let step = progress.add(progress::spinner("Parsing links dump"));
-    dump.parse_link(build.clone(), progress.clone(), thread_count)?;
+    dump.parse_link(build.clone(), &progress, thread_count)?;
     step.finish();
 
     // Flush any cached data to disk.

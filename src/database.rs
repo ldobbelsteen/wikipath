@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::{Mutex, RwLock};
 use std::vec;
 
-use crate::memory::MemoryUsage;
+use crate::memory::MemUsage;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -83,11 +83,11 @@ impl<'db> WriteTransaction<'db> {
             incoming_table: Mutex::new(self.inner.open_table(INCOMING)?),
             outgoing_table: Mutex::new(self.inner.open_table(OUTGOING)?),
             redirects_table: Mutex::new(self.inner.open_table(REDIRECTS)?),
-            incoming_cache: Default::default(),
-            outgoing_cache: Default::default(),
-            redirects_cache: Default::default(),
-            ids: Default::default(),
-            memory_usage: MemoryUsage::new(5)?,
+            incoming_cache: Mutex::default(),
+            outgoing_cache: Mutex::default(),
+            redirects_cache: Mutex::default(),
+            ids: RwLock::default(),
+            memory_usage: MemUsage::new(5)?,
             max_memory_usage,
         })
     }
@@ -132,7 +132,7 @@ pub struct BuildTransaction<'db, 'txn> {
     outgoing_cache: Mutex<HashMap<PageId, Vec<PageId>>>,
     redirects_cache: Mutex<HashMap<PageId, PageId>>,
     ids: RwLock<HashMap<String, PageId>>,
-    memory_usage: MemoryUsage,
+    memory_usage: MemUsage,
     max_memory_usage: u64,
 }
 

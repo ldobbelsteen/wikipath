@@ -49,7 +49,7 @@ impl ExternalDumpFiles {
 impl Dump {
     /// Get information on the newest available dump from Wikimedia.
     pub async fn get_latest_external(language_code: &str) -> Result<ExternalDumpFiles> {
-        fn find_hash(hashes: &str, re: Regex) -> Option<ExternalFile> {
+        fn find_hash(hashes: &str, re: &Regex) -> Option<ExternalFile> {
             hashes
                 .lines()
                 .find(|line| re.is_match(line))
@@ -65,25 +65,25 @@ impl Dump {
         }
 
         let url = format!(
-            "https://dumps.wikimedia.org/{}wiki/latest/{}wiki-latest-sha1sums.txt",
-            language_code, language_code
+            "https://dumps.wikimedia.org/{language_code}wiki/latest/{language_code}wiki-latest-sha1sums.txt",
+            
         );
         let resp = reqwest::get(url).await?;
         let hashes = resp.text().await?;
 
         let page = find_hash(
             &hashes,
-            Regex::new(r"([0-9a-f]{40})  ((.+)wiki-([0-9]{8})-page.sql.gz)")?,
+            &Regex::new(r"([0-9a-f]{40})  ((.+)wiki-([0-9]{8})-page.sql.gz)")?,
         )
         .ok_or(anyhow!("missing page dump in sums file"))?;
         let redir = find_hash(
             &hashes,
-            Regex::new(r"([0-9a-f]{40})  ((.+)wiki-([0-9]{8})-redirect.sql.gz)")?,
+            &Regex::new(r"([0-9a-f]{40})  ((.+)wiki-([0-9]{8})-redirect.sql.gz)")?,
         )
         .ok_or(anyhow!("missing redirect dump in sums file"))?;
         let link = find_hash(
             &hashes,
-            Regex::new(r"([0-9a-f]{40})  ((.+)wiki-([0-9]{8})-pagelinks.sql.gz)")?,
+            &Regex::new(r"([0-9a-f]{40})  ((.+)wiki-([0-9]{8})-pagelinks.sql.gz)")?,
         )
         .ok_or(anyhow!("missing pagelinks dump in sums file"))?;
 
@@ -110,11 +110,9 @@ impl Dump {
         step.finish();
 
         let step = progress.add(progress::spinner("Hashing latest dump"));
-        try_join!(
-            Self::check_file_hash(&pages, &files.pages.hash, progress.clone()),
-            Self::check_file_hash(&redirects, &files.redirects.hash, progress.clone()),
-            Self::check_file_hash(&pagelinks, &files.pagelinks.hash, progress.clone())
-        )?;
+        Self::check_file_hash(&pages, &files.pages.hash, &progress)?;
+        Self::check_file_hash(&redirects, &files.redirects.hash, &progress)?;
+        Self::check_file_hash(&pagelinks, &files.pagelinks.hash, &progress)?;
         step.finish();
 
         Ok(Self {
@@ -163,7 +161,7 @@ impl Dump {
         if existing_bytes < total_bytes {
             let resp = client
                 .get(&url)
-                .header(reqwest::header::RANGE, format!("bytes={}-", existing_bytes))
+                .header(reqwest::header::RANGE, format!("bytes={existing_bytes}-"))
                 .send()
                 .await?;
 
@@ -182,7 +180,7 @@ impl Dump {
     }
 
     /// Check whether the hash of a file matches with a given hash.
-    async fn check_file_hash(path: &Path, hash: &str, progress: MultiProgress) -> Result<()> {
+    fn check_file_hash(path: &Path, hash: &str, progress: &MultiProgress) -> Result<()> {
         let file = File::open(path)?;
         let mut reader = BufReader::new(&file);
         let mut context = digest::Context::new(&digest::SHA1_FOR_LEGACY_USE_ONLY);

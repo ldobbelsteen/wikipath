@@ -1,47 +1,23 @@
 use crate::database::{Database, PageId};
 use anyhow::{bail, Result};
 use axum::{
-    body::{self, Full},
+    body::Body,
     extract::{Extension, Query},
     http::{header, HeaderValue, StatusCode, Uri},
     response::{IntoResponse, Response},
     routing::get,
-    Json, Router, Server,
+    Json, Router,
 };
-use futures::try_join;
 use include_dir::{include_dir, Dir};
 use serde::Deserialize;
-use std::{collections::HashMap, fs, net::SocketAddr, path::Path, sync::Arc};
+use std::{collections::HashMap, fs, path::Path, sync::Arc};
+use tokio::net::TcpListener;
 
 static WEB: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/web/dist");
 
 type Databases = Arc<HashMap<String, Database>>;
 
 pub async fn serve(databases_dir: &Path, listening_port: u16) -> Result<()> {
-    let databases: Databases = {
-        let mut result = HashMap::new();
-        for entry in fs::read_dir(databases_dir)? {
-            let path = entry?.path();
-            if let Some(ext) = path.extension() {
-                if ext == "redb" {
-                    println!("[INFO] opening database '{}'...", path.display());
-                    match Database::open(&path) {
-                        Ok(database) => {
-                            result.insert(database.metadata.language_code.to_string(), database);
-                        }
-                        Err(err) => {
-                            println!("[WARNING] skipping database '{}': {}", path.display(), err);
-                        }
-                    }
-                }
-            }
-        }
-        if result.is_empty() {
-            bail!("no databases found");
-        }
-        Arc::new(result)
-    };
-
     async fn list_databases(Extension(databases): Extension<Databases>) -> Response {
         let list = databases
             .values()
@@ -69,7 +45,7 @@ pub async fn serve(databases_dir: &Path, listening_port: u16) -> Result<()> {
                         StatusCode::INTERNAL_SERVER_ERROR,
                         "unexpected database error",
                     );
-                    eprintln!("[ERROR] failed getting shortest paths: {}", e);
+                    eprintln!("[ERROR] failed getting shortest paths: {e}");
                     response.into_response()
                 }
             }
@@ -98,44 +74,44 @@ pub async fn serve(databases_dir: &Path, listening_port: u16) -> Result<()> {
                         header::CONTENT_TYPE,
                         HeaderValue::from_str(mime_type.as_ref()).unwrap(),
                     )
-                    .body(body::boxed(Full::from(file.contents())))
+                    .body(Body::from(file.contents()))
                     .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
             },
         )
     }
 
-    let api = Router::new()
+    let databases: Databases = {
+        let mut result = HashMap::new();
+        for entry in fs::read_dir(databases_dir)? {
+            let path = entry?.path();
+            if let Some(ext) = path.extension() {
+                if ext == "redb" {
+                    println!("[INFO] opening database '{}'...", path.display());
+                    match Database::open(&path) {
+                        Ok(database) => {
+                            result.insert(database.metadata.language_code.to_string(), database);
+                        }
+                        Err(err) => {
+                            println!("[WARNING] skipping database '{}': {}", path.display(), err);
+                        }
+                    }
+                }
+            }
+        }
+        if result.is_empty() {
+            bail!("no databases found");
+        }
+        Arc::new(result)
+    };
+
+    let router = Router::new()
         .route("/api/list_databases", get(list_databases))
         .route("/api/shortest_paths", get(shortest_paths))
         .layer(Extension(databases))
         .fallback(web_files);
 
-    let service = api.into_make_service();
-    let ipv4 = SocketAddr::from(([0, 0, 0, 0], listening_port));
-    let ipv6 = SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], listening_port));
-    let server_ipv4 = Server::try_bind(&ipv4).map(|s| s.serve(service.clone()));
-    let server_ipv6 = Server::try_bind(&ipv6).map(|s| s.serve(service.clone()));
-
-    println!("[INFO] listening on port {}...", listening_port);
-    match (server_ipv4, server_ipv6) {
-        (Ok(ipv4), Ok(ipv6)) => {
-            try_join!(ipv4, ipv6)?;
-        }
-        (Ok(ipv4), Err(ipv6)) => {
-            println!("[WARNING] could not bind to IPv6 address: {}", ipv6);
-            ipv4.await?;
-        }
-        (Err(ipv4), Ok(ipv6)) => {
-            println!("[WARNING] could not bind to IPv4 address: {}", ipv4);
-            ipv6.await?;
-        }
-        (Err(_), Err(_)) => {
-            bail!(
-                "could bind to neither ipv4 nor ipv6 on port {}",
-                listening_port
-            );
-        }
-    };
+    let listener = TcpListener::bind(format!("0.0.0.0:{listening_port}")).await?;
+    axum::serve(listener, router).await?;
 
     Ok(())
 }
