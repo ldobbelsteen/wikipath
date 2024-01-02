@@ -60,7 +60,7 @@ impl Dump {
                                 if let Err(e) = consume_capture(captures) {
                                     progress
                                         .println(format!(
-                                            "[WARNING] error while consuming capture: {e}",
+                                            "[WARNING] Error while consuming capture: {e}",
                                         ))
                                         .unwrap(); // Assume print errors never happen.
                                 }

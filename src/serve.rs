@@ -86,13 +86,13 @@ pub async fn serve(databases_dir: &Path, listening_port: u16) -> Result<()> {
             let path = entry?.path();
             if let Some(ext) = path.extension() {
                 if ext == "redb" {
-                    println!("[INFO] opening database '{}'...", path.display());
+                    println!("[INFO] Opening database '{}'...", path.display());
                     match Database::open(&path) {
                         Ok(database) => {
                             result.insert(database.metadata.language_code.to_string(), database);
                         }
                         Err(err) => {
-                            println!("[WARNING] skipping database '{}': {}", path.display(), err);
+                            println!("[WARNING] Skipping database '{}': {}", path.display(), err);
                         }
                     }
                 }

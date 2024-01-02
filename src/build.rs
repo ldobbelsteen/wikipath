@@ -32,13 +32,23 @@ pub async fn build(
         dump_date: latest.get_dump_date(),
     };
 
+    let tmp_path = databases_dir.join(metadata.to_tmp_name());
+    if Path::new(&tmp_path).exists() {
+        println!("[WARNING] Temporary database from previous build found, removing...");
+        std::fs::remove_file(&tmp_path)?;
+    }
+
+    let final_path = databases_dir.join(metadata.to_name());
+    if Path::new(&final_path).exists() {
+        println!("[WARNING] Database already exists, skipping...");
+        return Ok(final_path);
+    }
+
     // Download the relevant dump files to a temporary directory.
     let dump = Dump::download_external(dumps_dir, latest, progress.clone()).await?;
 
     // Create a new database and prepare for ingestion.
-    let path = databases_dir.join(metadata.to_tmp_name());
-    let _ = std::fs::remove_file(&path);
-    let mut database = Database::open(&path)?;
+    let mut database = Database::open(&tmp_path)?;
     let transaction = database.begin_write()?;
     let build = Arc::new(transaction.open_build(max_memory_usage)?);
 
@@ -71,8 +81,7 @@ pub async fn build(
 
     // Move file from temporary path to permanent.
     drop(database);
-    let new_path = databases_dir.join(metadata.to_name());
-    std::fs::rename(path, &new_path)?;
+    std::fs::rename(tmp_path, &final_path)?;
     drop(progress);
     println!(
         "[INFO] Database '{}' succesfully built in {}!",
@@ -80,5 +89,5 @@ pub async fn build(
         HumanDuration(start.elapsed())
     );
 
-    Ok(new_path)
+    Ok(final_path)
 }
