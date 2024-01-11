@@ -1,13 +1,14 @@
 use crate::{
-    database::{Database, Metadata},
+    database::{BufferedLinkInserter, Database, Metadata},
     dump::{self, Dump},
-    progress,
+    parse::cleanup_redirects,
 };
 use anyhow::Result;
-use indicatif::{HumanDuration, MultiProgress};
+use humantime::format_duration;
+use log::{info, warn};
 use std::{
     path::{Path, PathBuf},
-    sync::Arc,
+    thread,
     time::Instant,
 };
 
@@ -19,13 +20,12 @@ pub async fn build(
     databases_dir: &Path,
     dumps_dir: &Path,
     thread_count: usize,
-    max_memory_usage: u64,
+    memory_limit: u64,
 ) -> Result<PathBuf> {
     let start = Instant::now();
-    println!("\n[INFO] Building '{language_code}' database...");
-    let progress = MultiProgress::new();
+    info!("building '{language_code}' database...");
 
-    // Get the info of the latest Wikipedia database dump.
+    info!("getting latest dump information...");
     let latest = dump::Dump::get_latest_external(language_code).await?;
     let metadata = Metadata {
         language_code: latest.get_language_code(),
@@ -34,59 +34,62 @@ pub async fn build(
 
     let tmp_path = databases_dir.join(metadata.to_tmp_name());
     if Path::new(&tmp_path).exists() {
-        println!("[WARNING] Temporary database from previous build found, removing...");
+        warn!("temporary database from previous build found, removing...");
         std::fs::remove_file(&tmp_path)?;
     }
 
     let final_path = databases_dir.join(metadata.to_name());
     if Path::new(&final_path).exists() {
-        println!("[WARNING] Database already exists, skipping...");
+        warn!("database already exists, skipping...");
         return Ok(final_path);
     }
 
-    // Download the relevant dump files to a temporary directory.
-    let dump = Dump::download_external(dumps_dir, latest, progress.clone()).await?;
-
-    // Create a new database and prepare for ingestion.
     let mut database = Database::open(&tmp_path)?;
-    let transaction = database.begin_write()?;
-    let build = Arc::new(transaction.open_build(max_memory_usage)?);
+    let txn = database.begin_write()?;
+    let mut build = txn.begin_build()?;
 
-    // Parse the page dump, extracting all pages' IDs and titles.
-    let step = progress.add(progress::spinner("Parsing page dump"));
-    dump.parse_page(build.clone(), &progress, thread_count)?;
-    step.finish();
+    let dump = Dump::download_external(dumps_dir, latest).await?;
 
-    // Parse the redirect dump, extracting all redirects from page to page.
-    let step = progress.add(progress::spinner("Parsing redirects dump"));
-    dump.parse_redir(build.clone(), &progress, thread_count)?;
-    step.finish();
+    info!("parsing page dump...");
+    let pages = dump.parse_page_dump(thread_count)?;
+    info!("{} unique pages found!", pages.len());
 
-    // Parse the pagelink dump, extracting all links from page to page.
-    let step = progress.add(progress::spinner("Parsing links dump"));
-    dump.parse_link(build.clone(), &progress, thread_count)?;
-    step.finish();
+    info!("parsing redirects dump...");
+    let mut redirs = dump.parse_redir_dump(&pages, thread_count)?;
+    info!("{} raw redirects found!", redirs.len());
 
-    // Flush any cached data to disk.
-    let step = progress.add(progress::spinner("Flushing to disk"));
-    let build = Arc::try_unwrap(build).unwrap_or_else(|_| panic!("could not unwrap build arc"));
-    build.flush()?;
-    transaction.commit()?;
-    step.finish();
+    info!("cleaning up redirects...");
+    cleanup_redirects(&mut redirs);
+    info!("{} clean redirects found!", redirs.len());
 
-    // Compact the on-disk database.
-    let step = progress.add(progress::spinner("Compacting database"));
+    info!("inserting redirects into database...");
+    build.insert_redirects(&redirs)?;
+
+    info!("parsing links dump & inserting into database...");
+    thread::scope(|scope| -> Result<()> {
+        let buffer = BufferedLinkInserter::for_txn(&mut build, memory_limit, scope)?;
+        dump.parse_link_dump(&pages, &redirs, thread_count, |source, target| {
+            buffer.insert(source, target);
+        })?;
+        info!("inserting remaining buffered links into database...");
+        let link_count = buffer.flush()?;
+        info!("{link_count} links found!");
+        Ok(())
+    })?;
+
+    info!("comitting transaction...");
+    drop(build);
+    txn.commit()?;
+
+    info!("compacting database...");
     database.compact()?;
-    step.finish();
 
-    // Move file from temporary path to permanent.
     drop(database);
     std::fs::rename(tmp_path, &final_path)?;
-    drop(progress);
-    println!(
-        "[INFO] Database '{}' succesfully built in {}!",
+    info!(
+        "database '{}' succesfully built in {}!",
         metadata.to_name(),
-        HumanDuration(start.elapsed())
+        format_duration(start.elapsed())
     );
 
     Ok(final_path)

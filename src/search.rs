@@ -68,14 +68,14 @@ impl Database {
         }
 
         let txn = self.begin_read()?;
-        let tables = txn.open_serve()?;
+        let tables = txn.begin_serve()?;
 
         let (source, source_is_redirect) = tables
-            .get_redirect(source)?
+            .redirect(source)?
             .map_or((source, false), |new_source| (new_source, true));
 
         let (target, target_is_redirect) = tables
-            .get_redirect(target)?
+            .redirect(target)?
             .map_or((target, false), |new_target| (new_target, true));
 
         let mut forward_parents: HashMap<PageId, HashSet<PageId>> =
@@ -99,7 +99,7 @@ impl Database {
                     let page = forward_queue
                         .pop_front()
                         .ok_or(anyhow!("empty forward queue in bfs"))?;
-                    for out in tables.get_outgoing_links(page)? {
+                    for out in tables.outgoing_links(page)? {
                         if !forward_parents.contains_key(&out) {
                             forward_queue.push_back(out);
                             if let Some(set) = new_parents.get_mut(&out) {
@@ -129,7 +129,7 @@ impl Database {
                     let page = backward_queue
                         .pop_front()
                         .ok_or(anyhow!("empty backward queue in bfs"))?;
-                    for inc in tables.get_incoming_links(page)? {
+                    for inc in tables.incoming_links(page)? {
                         if !backward_parents.contains_key(&inc) {
                             backward_queue.push_back(inc);
                             if let Some(parents) = new_parents.get_mut(&inc) {

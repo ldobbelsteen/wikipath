@@ -9,6 +9,7 @@ use axum::{
     Json, Router,
 };
 use include_dir::{include_dir, Dir};
+use log::{error, info, warn};
 use serde::Deserialize;
 use std::{collections::HashMap, fs, path::Path, sync::Arc};
 use tokio::net::TcpListener;
@@ -45,7 +46,7 @@ pub async fn serve(databases_dir: &Path, listening_port: u16) -> Result<()> {
                         StatusCode::INTERNAL_SERVER_ERROR,
                         "unexpected database error",
                     );
-                    eprintln!("[ERROR] failed getting shortest paths: {e}");
+                    error!("failed getting shortest paths: {e}...");
                     response.into_response()
                 }
             }
@@ -86,13 +87,13 @@ pub async fn serve(databases_dir: &Path, listening_port: u16) -> Result<()> {
             let path = entry?.path();
             if let Some(ext) = path.extension() {
                 if ext == "redb" {
-                    println!("[INFO] Opening database '{}'...", path.display());
+                    info!("opening database '{}'...", path.display());
                     match Database::open(&path) {
                         Ok(database) => {
                             result.insert(database.metadata.language_code.to_string(), database);
                         }
                         Err(err) => {
-                            println!("[WARNING] Skipping database '{}': {}", path.display(), err);
+                            warn!("skipping database '{}': {}", path.display(), err);
                         }
                     }
                 }
@@ -111,7 +112,7 @@ pub async fn serve(databases_dir: &Path, listening_port: u16) -> Result<()> {
         .fallback(web_files);
 
     let listener = TcpListener::bind(format!(":::{listening_port}")).await?;
-    println!("[INFO] Listening on port {listening_port}...");
+    info!("listening on port {listening_port}...");
     axum::serve(listener, router).await?;
 
     Ok(())

@@ -1,5 +1,6 @@
 #![warn(clippy::pedantic)]
 
+use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
 
@@ -8,7 +9,6 @@ mod database;
 mod dump;
 mod memory;
 mod parse;
-mod progress;
 mod search;
 mod serve;
 
@@ -34,7 +34,7 @@ enum Action {
         /// Number of threads to use while parsing. Uses all by default.
         #[clap(long)]
         threads: Option<usize>,
-        /// Maximum number of gigabytes (GB) of memory that can be used for caching (not a hard limit).
+        /// Maximum number of gigabytes (GB) of memory that can be used (higher values prevent the buffer having to be flushed prematurely and in turn improve performance).
         #[clap(long, default_value = "12")]
         memory: u64,
     },
@@ -50,7 +50,13 @@ enum Action {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<()> {
+    if std::env::var("RUST_LOG").is_err() {
+        std::env::set_var("RUST_LOG", "info");
+    }
+
+    env_logger::builder().format_target(false).try_init()?;
+
     let args = Arguments::parse();
     match args.action {
         Action::Build {
@@ -63,28 +69,23 @@ async fn main() {
             let databases_dir = Path::new(&databases);
             let dumps_dir = dumps.map_or(std::env::temp_dir().join("wikipath"), PathBuf::from);
             let thread_count = threads.unwrap_or_else(num_cpus::get);
-            let max_memory_usage = memory * 1024 * 1024 * 1024;
+            let memory_limit = memory * 1024 * 1024 * 1024;
             for language_code in languages.split(',') {
-                if let Err(e) = build::build(
+                build::build(
                     language_code,
                     databases_dir,
                     &dumps_dir,
                     thread_count,
-                    max_memory_usage,
+                    memory_limit,
                 )
-                .await
-                {
-                    eprintln!("[FATAL] {e}");
-                    std::process::exit(1);
-                }
+                .await?;
             }
         }
         Action::Serve { databases, port } => {
             let databases_dir = Path::new(&databases);
-            if let Err(e) = serve::serve(databases_dir, port).await {
-                eprintln!("[FATAL] {e}");
-                std::process::exit(1);
-            }
+            serve::serve(databases_dir, port).await?;
         }
     }
+
+    Ok(())
 }

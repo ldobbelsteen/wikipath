@@ -1,16 +1,14 @@
-use crate::progress;
 use anyhow::{anyhow, bail, Result};
 use data_encoding::HEXLOWER;
 use futures::try_join;
 use futures_util::StreamExt;
-use indicatif::MultiProgress;
+use log::info;
 use regex::Regex;
 use ring::digest;
 use std::{
     fs::File,
     io::{BufReader, Read, Write},
     path::{Path, PathBuf},
-    str,
 };
 
 #[derive(Debug)]
@@ -65,8 +63,7 @@ impl Dump {
         }
 
         let url = format!(
-            "https://dumps.wikimedia.org/{language_code}wiki/latest/{language_code}wiki-latest-sha1sums.txt",
-            
+            "https://dumps.wikimedia.org/{language_code}wiki/latest/{language_code}wiki-latest-sha1sums.txt"
         );
         let resp = reqwest::get(url).await?;
         let hashes = resp.text().await?;
@@ -95,25 +92,19 @@ impl Dump {
     }
 
     /// Download all relevant dump files from Wikimedia into a directory.
-    pub async fn download_external(
-        dumps_dir: &Path,
-        files: ExternalDumpFiles,
-        progress: MultiProgress,
-    ) -> Result<Self> {
+    pub async fn download_external(dumps_dir: &Path, files: ExternalDumpFiles) -> Result<Self> {
         std::fs::create_dir_all(dumps_dir)?;
-        let step = progress.add(progress::spinner("Downloading latest dump"));
+        info!("downloading latest dump files...");
         let (pages, redirects, pagelinks) = try_join!(
-            Self::download_external_file(dumps_dir, &files.pages, progress.clone()),
-            Self::download_external_file(dumps_dir, &files.redirects, progress.clone()),
-            Self::download_external_file(dumps_dir, &files.pagelinks, progress.clone())
+            Self::download_external_file(dumps_dir, &files.pages),
+            Self::download_external_file(dumps_dir, &files.redirects),
+            Self::download_external_file(dumps_dir, &files.pagelinks)
         )?;
-        step.finish();
 
-        let step = progress.add(progress::spinner("Hashing latest dump"));
-        Self::check_file_hash(&pages, &files.pages.hash, &progress)?;
-        Self::check_file_hash(&redirects, &files.redirects.hash, &progress)?;
-        Self::check_file_hash(&pagelinks, &files.pagelinks.hash, &progress)?;
-        step.finish();
+        info!("checking latest dump file hashes...");
+        Self::check_file_hash(&pages, &files.pages.hash)?;
+        Self::check_file_hash(&redirects, &files.redirects.hash)?;
+        Self::check_file_hash(&pagelinks, &files.pagelinks.hash)?;
 
         Ok(Self {
             pages,
@@ -127,7 +118,6 @@ impl Dump {
     async fn download_external_file(
         dumps_dir: &Path,
         external_file: &ExternalFile,
-        progress: MultiProgress,
     ) -> Result<PathBuf> {
         let target = dumps_dir.join(&external_file.full_name);
         let mut file = {
@@ -152,12 +142,6 @@ impl Dump {
             .and_then(|h| h.to_str().ok().and_then(|s| s.parse().ok()))
             .ok_or(anyhow!("missing Content-Length header at '{}'", url))?;
 
-        let bar = progress.add(progress::byte(
-            &external_file.full_name,
-            existing_bytes,
-            total_bytes,
-        ));
-
         if existing_bytes < total_bytes {
             let resp = client
                 .get(&url)
@@ -169,39 +153,28 @@ impl Dump {
             while let Some(chunk) = stream.next().await {
                 let chunk = chunk?;
                 file.write_all(&chunk)?;
-                bar.inc(chunk.len() as u64);
             }
             file.flush()?;
         }
-
-        bar.finish();
 
         Ok(target)
     }
 
     /// Check whether the hash of a file matches with a given hash.
-    fn check_file_hash(path: &Path, hash: &str, progress: &MultiProgress) -> Result<()> {
+    fn check_file_hash(path: &Path, hash: &str) -> Result<()> {
         let file = File::open(path)?;
         let mut reader = BufReader::new(&file);
         let mut context = digest::Context::new(&digest::SHA1_FOR_LEGACY_USE_ONLY);
         let mut buffer = [0; 8192];
-
-        let bar = progress.add(progress::byte(
-            &format!("{}", path.display()),
-            0,
-            file.metadata()?.len(),
-        ));
 
         loop {
             let count = reader.read(&mut buffer)?;
             if count == 0 {
                 break;
             }
-            bar.inc(count as u64);
             context.update(&buffer[..count]);
         }
 
-        bar.finish();
         let digest = HEXLOWER.encode(context.finish().as_ref());
         if digest != hash {
             bail!(

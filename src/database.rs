@@ -1,13 +1,17 @@
+use crate::memory::ProcessMemoryUsageChecker;
 use anyhow::{anyhow, Result};
-use hashbrown::{HashMap, HashSet};
+use hashbrown::HashMap;
+use itertools::Itertools;
+use log::info;
 use redb::{ReadOnlyTable, ReadableTable, Table, TableDefinition};
 use regex::Regex;
 use serde::Serialize;
 use std::path::Path;
-use std::sync::{Mutex, RwLock};
-use std::vec;
-
-use crate::memory::MemUsage;
+use std::sync::mpsc::Sender;
+use std::sync::{mpsc, Arc, Mutex};
+use std::thread::{Scope, ScopedJoinHandle};
+use std::time::Duration;
+use std::{mem, vec};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -56,204 +60,6 @@ pub struct Database {
     pub metadata: Metadata,
 }
 
-pub struct ReadTransaction<'db> {
-    inner: redb::ReadTransaction<'db>,
-}
-
-impl<'db> ReadTransaction<'db> {
-    pub fn open_serve(&'db self) -> Result<ServeTransaction<'db>> {
-        Ok(ServeTransaction {
-            incoming: self.inner.open_table(INCOMING)?,
-            outgoing: self.inner.open_table(OUTGOING)?,
-            redirects: self.inner.open_table(REDIRECTS)?,
-        })
-    }
-}
-
-pub struct WriteTransaction<'db> {
-    inner: redb::WriteTransaction<'db>,
-}
-
-impl<'db> WriteTransaction<'db> {
-    pub fn open_build<'txn>(
-        &'txn self,
-        max_memory_usage: u64,
-    ) -> Result<BuildTransaction<'db, 'txn>> {
-        Ok(BuildTransaction {
-            incoming_table: Mutex::new(self.inner.open_table(INCOMING)?),
-            outgoing_table: Mutex::new(self.inner.open_table(OUTGOING)?),
-            redirects_table: Mutex::new(self.inner.open_table(REDIRECTS)?),
-            incoming_cache: Mutex::default(),
-            outgoing_cache: Mutex::default(),
-            redirects_cache: Mutex::default(),
-            ids: RwLock::default(),
-            memory_usage: MemUsage::new(5)?,
-            max_memory_usage,
-        })
-    }
-
-    pub fn commit(self) -> Result<()> {
-        self.inner.commit()?;
-        Ok(())
-    }
-}
-
-pub struct ServeTransaction<'txn> {
-    incoming: ReadOnlyTable<'txn, PageId, Vec<PageId>>,
-    outgoing: ReadOnlyTable<'txn, PageId, Vec<PageId>>,
-    redirects: ReadOnlyTable<'txn, PageId, PageId>,
-}
-
-impl<'txn> ServeTransaction<'txn> {
-    pub fn get_incoming_links(&self, target: PageId) -> Result<Vec<PageId>> {
-        match self.incoming.get(target)? {
-            Some(res) => Ok(res.value()),
-            None => Ok(vec![]),
-        }
-    }
-
-    pub fn get_outgoing_links(&self, source: PageId) -> Result<Vec<PageId>> {
-        match self.outgoing.get(source)? {
-            Some(res) => Ok(res.value()),
-            None => Ok(vec![]),
-        }
-    }
-
-    pub fn get_redirect(&self, page: PageId) -> Result<Option<PageId>> {
-        Ok(self.redirects.get(page)?.map(|r| r.value()))
-    }
-}
-
-pub struct BuildTransaction<'db, 'txn> {
-    incoming_table: Mutex<Table<'db, 'txn, PageId, Vec<PageId>>>,
-    outgoing_table: Mutex<Table<'db, 'txn, PageId, Vec<PageId>>>,
-    redirects_table: Mutex<Table<'db, 'txn, PageId, PageId>>,
-    incoming_cache: Mutex<HashMap<PageId, Vec<PageId>>>,
-    outgoing_cache: Mutex<HashMap<PageId, Vec<PageId>>>,
-    redirects_cache: Mutex<HashMap<PageId, PageId>>,
-    ids: RwLock<HashMap<String, PageId>>,
-    memory_usage: MemUsage,
-    max_memory_usage: u64,
-}
-
-impl<'db, 'txn> BuildTransaction<'db, 'txn> {
-    /// Get the page id associated with a page title.
-    pub fn get_id(&self, title: &str) -> Option<PageId> {
-        self.ids.read().unwrap().get(title).copied()
-    }
-
-    /// Store a page title and the corresponding page id.
-    pub fn store_title(&self, title: String, id: PageId) {
-        self.ids.write().unwrap().insert(title, id);
-    }
-
-    /// Store a link from one page's id to another.
-    pub fn insert_link(&self, source: PageId, target: PageId) -> Result<()> {
-        self.incoming_cache
-            .lock()
-            .unwrap()
-            .entry(target)
-            .or_default()
-            .push(source);
-        self.outgoing_cache
-            .lock()
-            .unwrap()
-            .entry(source)
-            .or_default()
-            .push(target);
-        self.shrink_cache()?;
-        Ok(())
-    }
-
-    /// Store a redirect from one page's id to another.
-    pub fn insert_redirect(&self, source: PageId, target: PageId) -> Result<()> {
-        self.redirects_cache.lock().unwrap().insert(source, target);
-        self.shrink_cache()?;
-        Ok(())
-    }
-
-    /// Shrink cache until below maximum memory usage.
-    fn shrink_cache(&self) -> Result<()> {
-        if self.memory_usage.get() > self.max_memory_usage {
-            self.flush_redirects()?;
-            if self.memory_usage.get() > self.max_memory_usage {
-                self.flush_outgoing()?;
-                if self.memory_usage.get() > self.max_memory_usage {
-                    self.flush_incoming()?;
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Flush currently cached incoming links to disk.
-    fn flush_incoming(&self) -> Result<()> {
-        let mut incoming_table = self.incoming_table.lock().unwrap();
-        for (target, mut sources) in self.incoming_cache.lock().unwrap().drain() {
-            if let Some(mut old_sources) = incoming_table.get(target)?.map(|r| r.value()) {
-                sources.append(&mut old_sources);
-            }
-            incoming_table.insert(target, sources)?;
-        }
-        Ok(())
-    }
-
-    /// Flush currently cached incoming links to disk.
-    fn flush_outgoing(&self) -> Result<()> {
-        let mut outgoing_table = self.outgoing_table.lock().unwrap();
-        for (source, mut targets) in self.outgoing_cache.lock().unwrap().drain() {
-            if let Some(mut old_targets) = outgoing_table.get(source)?.map(|r| r.value()) {
-                targets.append(&mut old_targets);
-            }
-            outgoing_table.insert(source, targets)?;
-        }
-        Ok(())
-    }
-
-    /// Flush currently cached redirects to disk.
-    fn flush_redirects(&self) -> Result<()> {
-        let mut redirects_cache = self.redirects_cache.lock().unwrap();
-        let mut redirects_table = self.redirects_table.lock().unwrap();
-        for (source, target) in redirects_cache.iter() {
-            let source = *source;
-            let mut target = *target;
-            let mut sources: HashSet<PageId> = HashSet::from([source]);
-            loop {
-                if let Some(new_target) = redirects_cache.get(&target) {
-                    if sources.contains(new_target) {
-                        break;
-                    }
-                    sources.insert(target);
-                    target = *new_target;
-                    continue;
-                }
-                if let Some(new_target) = redirects_table.get(target)?.map(|r| r.value()) {
-                    if sources.contains(&new_target) {
-                        break;
-                    }
-                    sources.insert(target);
-                    target = new_target;
-                    continue;
-                }
-                break;
-            }
-            for source in sources {
-                redirects_table.insert(source, target)?;
-            }
-        }
-        redirects_cache.clear();
-        Ok(())
-    }
-
-    /// Flush all cached items to disk and close.
-    pub fn flush(self) -> Result<()> {
-        self.flush_redirects()?;
-        self.flush_outgoing()?;
-        self.flush_incoming()?;
-        Ok(())
-    }
-}
-
 impl Database {
     pub fn open(path: &Path) -> Result<Self> {
         let filename = path
@@ -283,5 +89,250 @@ impl Database {
     pub fn compact(&mut self) -> Result<()> {
         self.inner.compact()?;
         Ok(())
+    }
+}
+
+pub struct ReadTransaction<'db> {
+    inner: redb::ReadTransaction<'db>,
+}
+
+impl<'db> ReadTransaction<'db> {
+    pub fn begin_serve(&'db self) -> Result<ServeTransaction<'db>> {
+        Ok(ServeTransaction {
+            incoming: self.inner.open_table(INCOMING)?,
+            outgoing: self.inner.open_table(OUTGOING)?,
+            redirects: self.inner.open_table(REDIRECTS)?,
+        })
+    }
+}
+
+#[derive(Debug)]
+pub struct ServeTransaction<'txn> {
+    incoming: ReadOnlyTable<'txn, PageId, Vec<PageId>>,
+    outgoing: ReadOnlyTable<'txn, PageId, Vec<PageId>>,
+    redirects: ReadOnlyTable<'txn, PageId, PageId>,
+}
+
+impl<'txn> ServeTransaction<'txn> {
+    pub fn incoming_links(&self, target: PageId) -> Result<Vec<PageId>> {
+        match self.incoming.get(target)? {
+            Some(res) => Ok(res.value()),
+            None => Ok(vec![]),
+        }
+    }
+
+    pub fn outgoing_links(&self, source: PageId) -> Result<Vec<PageId>> {
+        match self.outgoing.get(source)? {
+            Some(res) => Ok(res.value()),
+            None => Ok(vec![]),
+        }
+    }
+
+    pub fn redirect(&self, page: PageId) -> Result<Option<PageId>> {
+        Ok(self.redirects.get(page)?.map(|r| r.value()))
+    }
+}
+
+pub struct WriteTransaction<'db> {
+    inner: redb::WriteTransaction<'db>,
+}
+
+impl<'db> WriteTransaction<'db> {
+    pub fn begin_build<'txn>(&'txn self) -> Result<BuildTransaction<'db, 'txn>> {
+        Ok(BuildTransaction {
+            redirects: self.inner.open_table(REDIRECTS)?,
+            incoming: self.inner.open_table(INCOMING)?,
+            outgoing: self.inner.open_table(OUTGOING)?,
+        })
+    }
+
+    pub fn commit(self) -> Result<()> {
+        self.inner.commit()?;
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub struct BuildTransaction<'db, 'txn> {
+    redirects: Table<'db, 'txn, u32, u32>,
+    incoming: Table<'db, 'txn, PageId, Vec<PageId>>,
+    outgoing: Table<'db, 'txn, PageId, Vec<PageId>>,
+}
+
+impl<'db, 'txn> BuildTransaction<'db, 'txn> {
+    pub fn insert_redirects(&mut self, redirs: &HashMap<PageId, PageId>) -> Result<()> {
+        for (source, target) in redirs {
+            if self.redirects.insert(source, target)?.is_some() {
+                return Err(anyhow!("redirect source already in the database"));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn insert_incoming(&mut self, incoming: HashMap<PageId, Vec<PageId>>) -> Result<usize> {
+        let mut removed = 0;
+        let mut added = 0;
+
+        for (target, sources) in incoming {
+            let new_sources: Vec<PageId> = {
+                if let Some(existing) = self.incoming.get(target)? {
+                    let existing = existing.value();
+                    removed += existing.len();
+                    existing
+                        .into_iter()
+                        .chain(sources.into_iter())
+                        .unique()
+                        .collect()
+                } else {
+                    sources.into_iter().unique().collect()
+                }
+            };
+            added += new_sources.len();
+            self.incoming.insert(target, new_sources)?;
+        }
+
+        Ok(added - removed)
+    }
+
+    pub fn insert_outgoing(&mut self, outgoing: HashMap<PageId, Vec<PageId>>) -> Result<usize> {
+        let mut removed = 0;
+        let mut added = 0;
+
+        for (source, targets) in outgoing {
+            let new_targets: Vec<PageId> = {
+                if let Some(existing) = self.outgoing.get(source)? {
+                    let existing = existing.value();
+                    removed += existing.len();
+                    existing
+                        .into_iter()
+                        .chain(targets.into_iter())
+                        .unique()
+                        .collect()
+                } else {
+                    targets.into_iter().unique().collect()
+                }
+            };
+            added += new_targets.len();
+            self.outgoing.insert(source, new_targets)?;
+        }
+
+        Ok(added - removed)
+    }
+}
+
+#[derive(Debug)]
+pub struct BufferedLinkInserter<'scope> {
+    incoming_buffer: Arc<Mutex<HashMap<PageId, Vec<PageId>>>>,
+    outgoing_buffer: Arc<Mutex<HashMap<PageId, Vec<PageId>>>>,
+    inserter: ScopedJoinHandle<'scope, Result<usize>>,
+    flush_tx: Sender<()>,
+}
+
+impl<'scope> BufferedLinkInserter<'scope> {
+    pub fn for_txn<'env, 'db, 'txn>(
+        txn: &'env mut BuildTransaction<'db, 'txn>,
+        memory_limit: u64,
+        scope: &'scope Scope<'scope, 'env>,
+    ) -> Result<Self> {
+        let (flush_tx, flush_rx) = mpsc::channel::<()>();
+
+        let incoming_buffer = Arc::new(Mutex::default());
+        let incoming_buffer_c = incoming_buffer.clone();
+
+        let outgoing_buffer = Arc::new(Mutex::default());
+        let outgoing_buffer_c = outgoing_buffer.clone();
+
+        let mut memory_checker = ProcessMemoryUsageChecker::new()?;
+        if memory_checker.get() > memory_limit {
+            return Err(anyhow!(
+                "memory limit exceeded already before buffering links"
+            ));
+        }
+
+        let inserter = scope.spawn(move || {
+            let mut incoming_count = 0;
+            let mut outgoing_count = 0;
+
+            loop {
+                // Wait a bit for the buffer to grow or flush and terminate if we get a signal.
+                let flush = flush_rx.recv_timeout(Duration::from_secs(1)).is_ok();
+
+                if flush {
+                    // Flush the incoming buffer.
+                    let incoming_buffer_taken =
+                        mem::replace(&mut *incoming_buffer_c.lock().unwrap(), HashMap::new());
+                    incoming_count += txn.insert_incoming(incoming_buffer_taken)?;
+
+                    // Flush the outgoing buffer.
+                    let outgoing_buffer_taken =
+                        mem::replace(&mut *outgoing_buffer_c.lock().unwrap(), HashMap::new());
+                    outgoing_count += txn.insert_outgoing(outgoing_buffer_taken)?;
+
+                    break;
+                }
+
+                // If we exceed the limit, flush the buffered outgoing links first.
+                if memory_checker.get() > memory_limit {
+                    info!("flushing buffered outgoing links due to reaching memory limit...");
+                    let outgoing_buffer_taken =
+                        mem::replace(&mut *outgoing_buffer_c.lock().unwrap(), HashMap::new());
+                    outgoing_count += txn.insert_outgoing(outgoing_buffer_taken)?;
+
+                    // If we still exceed the limit, flush the buffered incoming links second.
+                    if memory_checker.get() > memory_limit {
+                        info!("flushing buffered incoming links due to reaching memory limit...");
+                        let incoming_buffer_taken =
+                            mem::replace(&mut *incoming_buffer_c.lock().unwrap(), HashMap::new());
+                        incoming_count += txn.insert_incoming(incoming_buffer_taken)?;
+                    }
+                }
+
+                if flush {
+                    break;
+                }
+            }
+
+            if incoming_count != outgoing_count {
+                return Err(anyhow!(
+                    "unexpected discrepancy between incoming and outgoing links"
+                ));
+            }
+
+            Ok(incoming_count)
+        });
+
+        Ok(Self {
+            incoming_buffer,
+            outgoing_buffer,
+            inserter,
+            flush_tx,
+        })
+    }
+
+    pub fn insert(&self, source: PageId, target: PageId) {
+        self.incoming_buffer
+            .lock()
+            .unwrap()
+            .entry(target)
+            .or_default()
+            .push(source);
+        self.outgoing_buffer
+            .lock()
+            .unwrap()
+            .entry(source)
+            .or_default()
+            .push(target);
+    }
+
+    pub fn flush(self) -> Result<usize> {
+        self.flush_tx.send(())?;
+        let link_count = self.inserter.join().unwrap()?;
+        if self.incoming_buffer.lock().unwrap().len() > 0 {
+            return Err(anyhow!("incoming buffer unexpectedly not empty"));
+        }
+        if self.outgoing_buffer.lock().unwrap().len() > 0 {
+            return Err(anyhow!("outgoing buffer unexpectedly not empty"));
+        }
+        Ok(link_count)
     }
 }
