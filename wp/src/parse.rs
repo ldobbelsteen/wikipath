@@ -50,8 +50,8 @@ impl Dump {
             },
             thread_count,
         )?;
-        Ok(Arc::try_unwrap(result)
-            .map_err(|_| anyhow!("failed to unwrap page result arc"))?
+        Ok(Arc::into_inner(result)
+            .ok_or(anyhow!("failed to unwrap page result arc"))?
             .into_inner()?)
     }
 
@@ -102,8 +102,8 @@ impl Dump {
             },
             thread_count,
         )?;
-        Ok(Arc::try_unwrap(result)
-            .map_err(|_| anyhow!("failed to unwrap redir result arc"))?
+        Ok(Arc::into_inner(result)
+            .ok_or(anyhow!("failed to unwrap redir result arc"))?
             .into_inner()?)
     }
 
