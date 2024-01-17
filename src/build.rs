@@ -2,6 +2,7 @@ use anyhow::Result;
 use humantime::format_duration;
 use log::{info, warn};
 use std::{
+    cmp::max,
     path::{Path, PathBuf},
     thread,
     time::Instant,
@@ -65,9 +66,14 @@ pub async fn build(
     info!("parsing links dump & inserting into database...");
     thread::scope(|scope| -> Result<()> {
         let buffer = BufferedLinkInserter::for_txn(&mut build, memory_limit, scope)?;
-        dump.parse_link_dump(&pages, &redirs, thread_count, |source, target| {
-            buffer.insert(source, target);
-        })?;
+        dump.parse_link_dump(
+            &pages,
+            &redirs,
+            max(thread_count - 1, 1),
+            |source, target| {
+                buffer.insert(source, target);
+            },
+        )?;
         info!("inserting remaining buffered links into database...");
         let link_count = buffer.flush()?;
         info!("{link_count} links found!");

@@ -5,6 +5,7 @@ use hashbrown::HashMap;
 use log::{debug, warn};
 use regex::bytes::Regex;
 use std::{
+    cmp::max,
     fs::File,
     io::Read,
     path::{Path, PathBuf},
@@ -166,11 +167,7 @@ impl Dump {
     {
         thread::scope(|s| -> Result<()> {
             let path = PathBuf::from(path);
-            let parser_count = if thread_count > 1 {
-                thread_count - 1
-            } else {
-                1
-            };
+            let parser_count = max(thread_count - 1, 1);
 
             // Create channels for sending data chunks back and forth between the reader and parsers.
             let (fresh_tx, fresh_rx) = crossbeam_channel::unbounded::<Option<Chunk>>();
