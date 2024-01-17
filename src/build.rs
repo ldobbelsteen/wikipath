@@ -53,7 +53,7 @@ pub async fn build(
 
     info!("parsing redirects dump...");
     let mut redirs = dump.parse_redir_dump(&pages, thread_count)?;
-    info!("{} raw redirects found!", redirs.len());
+    info!("{} unfiltered redirects found!", redirs.len());
 
     info!("cleaning up redirects...");
     cleanup_redirects(&mut redirs);

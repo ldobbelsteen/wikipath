@@ -72,7 +72,7 @@ impl Dump {
                     str.parse::<PageId>()?
                 };
 
-                let mut target: PageId = {
+                let target: PageId = {
                     let m = caps.get(2).unwrap(); // Capture 2 always participates in the match
                     let str = str::from_utf8(m.as_bytes())?;
                     if let Some(id) = pages.get(str) {
@@ -83,25 +83,12 @@ impl Dump {
                     }
                 };
 
-                let mut redirs = result.lock().unwrap();
-
-                // Follow redirect chain until we reach the end or come back again.
-                while let Some(next) = redirs.get(&target) {
-                    if *next == source {
-                        debug!(
-                            "redirect chain cycle detected starting from page id {}",
-                            source
-                        );
-                        return Ok(());
-                    }
-                    target = *next;
-                }
-
                 if source == target {
                     debug!("self-redirect found for page id {}", source);
                     return Ok(());
                 }
 
+                let mut redirs = result.lock().unwrap();
                 if let Some(prev) = redirs.insert(source, target) {
                     if prev != target {
                         debug!(
