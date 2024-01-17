@@ -16,7 +16,6 @@ pub struct Dump {
     pub pages: PathBuf,
     pub redirects: PathBuf,
     pub pagelinks: PathBuf,
-    pub external: ExternalDumpFiles,
 }
 
 #[derive(Debug)]
@@ -109,7 +108,6 @@ impl Dump {
             pages,
             redirects,
             pagelinks,
-            external: files,
         })
     }
 

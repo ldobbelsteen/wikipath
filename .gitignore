@@ -1,6 +1,7 @@
-databases
-dumps
-target
+/databases
+/dumps
+/explore
+/target
 
-web/dist
-web/node_modules
+/web/dist
+/web/node_modules

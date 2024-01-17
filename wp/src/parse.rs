@@ -132,7 +132,7 @@ impl Dump {
     {
         Self::parse_dump_file(
             self.pagelinks.as_path(),
-            &Regex::new(r"\(([0-9]{1,10}),0,'(.{1,255}?)',0,(?:([0-9]{1,20})|NULL)\)")?, // https://www.mediawiki.org/wiki/Manual:Pagelinks_table
+            &Regex::new(r"\(([0-9]{1,10}),0,'(.{1,255}?)',0,(?:[0-9]{1,20}|NULL)\)")?, // https://www.mediawiki.org/wiki/Manual:Pagelinks_table
             1 + 10 + 4 + 255 + 4,
             |caps| {
                 let source: PageId = {
@@ -142,19 +142,13 @@ impl Dump {
                 };
 
                 let target: PageId = {
-                    // Capture 3 might be None. If so, try to get the target id using the target title instead
-                    if let Some(m) = caps.get(3) {
-                        let str = str::from_utf8(m.as_bytes())?;
-                        str.parse::<PageId>()?
+                    let m = caps.get(2).unwrap(); // Capture 2 always participates in the match
+                    let str = str::from_utf8(m.as_bytes())?;
+                    if let Some(id) = pages.get(str) {
+                        *id
                     } else {
-                        let m = caps.get(2).unwrap(); // Capture 2 always participates in the match
-                        let str = str::from_utf8(m.as_bytes())?;
-                        if let Some(id) = pages.get(str) {
-                            *id
-                        } else {
-                            debug!("link target title '{}' not known", str);
-                            return Ok(());
-                        }
+                        debug!("link target title '{}' not known", str);
+                        return Ok(());
                     }
                 };
 
