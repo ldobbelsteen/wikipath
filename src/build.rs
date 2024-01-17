@@ -1,8 +1,3 @@
-use crate::{
-    database::{BufferedLinkInserter, Database, Metadata},
-    dump::{self, Dump},
-    parse::cleanup_redirects,
-};
 use anyhow::Result;
 use humantime::format_duration;
 use log::{info, warn};
@@ -11,10 +6,12 @@ use std::{
     thread,
     time::Instant,
 };
+use wp::{cleanup_redirects, BufferedLinkInserter, Database, Dump, Metadata};
 
-/// Build a database in a certain language. Outputs the database into the
-/// specified directory. Dump files are temporarily downloaded to the system's
-/// temporary directory.
+/// Build a database in a certain language. Outputs the database into the specified directory. Dump
+/// files are downloaded into the specified directory to prevent re-downloading when re-building a
+/// database. Uses the specified number of threads and uses the specified number of bytes as a
+/// ceiling for memory usage.
 pub async fn build(
     language_code: &str,
     databases_dir: &Path,
@@ -26,7 +23,7 @@ pub async fn build(
     info!("building '{language_code}' database...");
 
     info!("getting latest dump information...");
-    let latest = dump::Dump::get_latest_external(language_code).await?;
+    let latest = Dump::get_latest_external(language_code).await?;
     let metadata = Metadata {
         language_code: latest.get_language_code(),
         dump_date: latest.get_dump_date(),

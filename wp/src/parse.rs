@@ -279,8 +279,9 @@ impl Dump {
     }
 }
 
-/// Remove chains of redirects by concatenating redirects to redirects to single
-/// redirects. This will flatten any redirects paths larger than one.
+/// Remove chains of redirects from a redirect mapping by concatenating redirects to redirects into
+/// single redirects. This will flatten any redirect paths larger than one. This operation is
+/// in-place.
 pub fn cleanup_redirects(redirs: &mut HashMap<PageId, PageId>) {
     let mut updates = HashMap::new();
     loop {

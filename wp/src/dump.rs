@@ -93,7 +93,6 @@ impl Dump {
 
     /// Download all relevant dump files from Wikimedia into a directory.
     pub async fn download_external(dumps_dir: &Path, files: ExternalDumpFiles) -> Result<Self> {
-        std::fs::create_dir_all(dumps_dir)?;
         info!("downloading latest dump files...");
         let (pages, redirects, pagelinks) = try_join!(
             Self::download_external_file(dumps_dir, &files.pages),

@@ -22,7 +22,7 @@ pub struct Metadata {
 
 impl Metadata {
     /// Extract metadata from the name of a database.
-    pub fn from_name(s: &str) -> Result<Self> {
+    fn from_name(s: &str) -> Result<Self> {
         let re = Regex::new(r"(.+)-(.+).redb(?:\.tmp)?")?;
         if let Some(caps) = re.captures(s) {
             if let Some(language_code) = caps.get(1) {
@@ -48,6 +48,7 @@ impl Metadata {
     }
 }
 
+/// Representation of a Wikimedia page id.
 pub type PageId = u32;
 
 const INCOMING: TableDefinition<PageId, Vec<PageId>> = TableDefinition::new("incoming");
@@ -61,31 +62,33 @@ pub struct Database {
 }
 
 impl Database {
+    /// Open a database file. If the file does not exist yet, a new one is created. Will return an
+    /// error if the file name in the path is not in the correct format.
     pub fn open(path: &Path) -> Result<Self> {
         let filename = path
             .file_name()
             .and_then(|s| s.to_str())
             .ok_or(anyhow!("database path '{}' is not valid", path.display()))?;
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
-        let inner = redb::Database::create(path)?;
         let metadata = Metadata::from_name(filename)?;
+        let inner = redb::Database::create(path)?;
         Ok(Self { inner, metadata })
     }
 
+    /// Begin a read transaction on the database.
     pub fn begin_read(&self) -> Result<ReadTransaction<'_>> {
         Ok(ReadTransaction {
             inner: self.inner.begin_read()?,
         })
     }
 
+    /// Begin a write transaction on the database.
     pub fn begin_write(&self) -> Result<WriteTransaction<'_>> {
         Ok(WriteTransaction {
             inner: self.inner.begin_write()?,
         })
     }
 
+    /// Compact the database file.
     pub fn compact(&mut self) -> Result<()> {
         self.inner.compact()?;
         Ok(())
@@ -229,6 +232,9 @@ pub struct BufferedLinkInserter<'scope> {
 }
 
 impl<'scope> BufferedLinkInserter<'scope> {
+    /// Create a buffered link inserter from a build transaction. This caches link inserts in a
+    /// buffer and periodically flushes the buffer to disk if the specified number of bytes of
+    /// memory is exceeded for the entire process.
     pub fn for_txn<'env, 'db, 'txn>(
         txn: &'env mut BuildTransaction<'db, 'txn>,
         memory_limit: u64,
@@ -309,6 +315,7 @@ impl<'scope> BufferedLinkInserter<'scope> {
         })
     }
 
+    /// Insert a link into the buffer.
     pub fn insert(&self, source: PageId, target: PageId) {
         self.incoming_buffer
             .lock()
@@ -324,6 +331,7 @@ impl<'scope> BufferedLinkInserter<'scope> {
             .push(target);
     }
 
+    /// Flush the entire buffer to disk and return the total number of unique inserted links.
     pub fn flush(self) -> Result<usize> {
         self.flush_tx.send(())?;
         let link_count = self.inserter.join().unwrap()?;

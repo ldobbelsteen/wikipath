@@ -1,24 +1,22 @@
-use crate::database::{Database, PageId};
 use anyhow::{bail, Result};
 use axum::{
-    body::Body,
     extract::{Extension, Query},
-    http::{header, HeaderValue, StatusCode, Uri},
+    handler::HandlerWithoutStateExt,
+    http::StatusCode,
     response::{IntoResponse, Response},
     routing::get,
     Json, Router,
 };
-use include_dir::{include_dir, Dir};
 use log::{error, info, warn};
 use serde::Deserialize;
 use std::{collections::HashMap, fs, path::Path, sync::Arc};
 use tokio::net::TcpListener;
-
-static WEB: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/web/dist");
+use tower_http::services::ServeDir;
+use wp::{Database, PageId};
 
 type Databases = Arc<HashMap<String, Database>>;
 
-pub async fn serve(databases_dir: &Path, listening_port: u16) -> Result<()> {
+pub async fn serve(databases_dir: &Path, web_dir: &Path, listening_port: u16) -> Result<()> {
     async fn list_databases(Extension(databases): Extension<Databases>) -> Response {
         let list = databases
             .values()
@@ -56,31 +54,6 @@ pub async fn serve(databases_dir: &Path, listening_port: u16) -> Result<()> {
         }
     }
 
-    async fn web_files(uri: Uri) -> Response {
-        let path = {
-            let raw_path = uri.path();
-            if raw_path == "/" {
-                "index.html"
-            } else {
-                raw_path.trim_start_matches('/')
-            }
-        };
-        let mime_type = mime_guess::from_path(path).first_or_text_plain();
-        WEB.get_file(path).map_or_else(
-            || StatusCode::NOT_FOUND.into_response(),
-            |file| {
-                Response::builder()
-                    .status(StatusCode::OK)
-                    .header(
-                        header::CONTENT_TYPE,
-                        HeaderValue::from_str(mime_type.as_ref()).unwrap(),
-                    )
-                    .body(Body::from(file.contents()))
-                    .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
-            },
-        )
-    }
-
     let databases: Databases = {
         let mut result = HashMap::new();
         for entry in fs::read_dir(databases_dir)? {
@@ -109,7 +82,10 @@ pub async fn serve(databases_dir: &Path, listening_port: u16) -> Result<()> {
         .route("/api/list_databases", get(list_databases))
         .route("/api/shortest_paths", get(shortest_paths))
         .layer(Extension(databases))
-        .fallback(web_files);
+        .fallback_service(
+            ServeDir::new(web_dir)
+                .not_found_service((StatusCode::NOT_FOUND, "asset not found").into_service()),
+        );
 
     let listener = TcpListener::bind(format!(":::{listening_port}")).await?;
     info!("listening on port {listening_port}...");

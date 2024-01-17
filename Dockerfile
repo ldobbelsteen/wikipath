@@ -7,10 +7,10 @@ RUN npm run build
 FROM rust:bookworm AS bin
 WORKDIR /build
 COPY . .
-COPY --from=web /build/dist /build/web/dist
 RUN cargo build --release
 
 FROM debian:bookworm
-RUN apt update && apt install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apt update && apt install -y ca-certificates && apt clean
+COPY --from=web /build/dist /web/dist
 COPY --from=bin /build/target/release/wikipath /usr/bin/wikipath
 CMD ["wikipath", "serve"]

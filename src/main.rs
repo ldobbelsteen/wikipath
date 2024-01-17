@@ -5,11 +5,6 @@ use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
 
 mod build;
-mod database;
-mod dump;
-mod memory;
-mod parse;
-mod search;
 mod serve;
 
 #[derive(Parser)]
@@ -22,7 +17,7 @@ struct Arguments {
 enum Action {
     /// Build Wikipath database(s).
     Build {
-        /// Language(s) to build, separated by commas. Uses ISO codes from https://en.wikipedia.org/wiki/List_of_Wikipedias.
+        /// Language(s) to build, separated by commas. Uses ISO codes from <https://en.wikipedia.org/wiki/List_of_Wikipedias>.
         #[clap(long)]
         languages: String,
         /// Directory to output database(s) to.
@@ -43,6 +38,9 @@ enum Action {
         /// Directory of databases.
         #[clap(short, default_value = "./databases")]
         databases: String,
+        /// Directory to web assets.
+        #[clap(short, default_value = "./web/dist")]
+        web: String,
         /// Port on which to serve the web interface and api.
         #[clap(short, default_value_t = 1789)]
         port: u16,
@@ -67,7 +65,11 @@ async fn main() -> Result<()> {
             memory,
         } => {
             let databases_dir = Path::new(&databases);
+            std::fs::create_dir_all(databases_dir)?;
+
             let dumps_dir = dumps.map_or(std::env::temp_dir().join("wikipath"), PathBuf::from);
+            std::fs::create_dir_all(&dumps_dir)?;
+
             let thread_count = threads.unwrap_or_else(num_cpus::get);
             let memory_limit = memory * 1024 * 1024 * 1024;
             for language_code in languages.split(',') {
@@ -81,9 +83,14 @@ async fn main() -> Result<()> {
                 .await?;
             }
         }
-        Action::Serve { databases, port } => {
+        Action::Serve {
+            databases,
+            web,
+            port,
+        } => {
             let databases_dir = Path::new(&databases);
-            serve::serve(databases_dir, port).await?;
+            let web_dir = Path::new(&web);
+            serve::serve(databases_dir, web_dir, port).await?;
         }
     }
 
