@@ -277,19 +277,21 @@ impl<'scope> BufferedLinkInserter<'scope> {
                     break;
                 }
 
-                // If we exceed the limit, flush the buffered outgoing links first.
+                // If we exceed the limit, flush the buffered incoming links first, since the links
+                // often seem to be sorted by target title in the dumps and thus we are less likely to
+                // incur the cost of updating a value in the database as opposed to just inserting.
                 if memory_checker.get() > memory_limit {
-                    info!("flushing buffered outgoing links due to reaching memory limit...");
-                    let outgoing_buffer_taken =
-                        mem::replace(&mut *outgoing_buffer_c.lock().unwrap(), HashMap::new());
-                    outgoing_count += txn.insert_outgoing(outgoing_buffer_taken)?;
+                    info!("flushing buffered incoming links due to reaching memory limit...");
+                    let incoming_buffer_taken =
+                        mem::replace(&mut *incoming_buffer_c.lock().unwrap(), HashMap::new());
+                    incoming_count += txn.insert_incoming(incoming_buffer_taken)?;
 
-                    // If we still exceed the limit, flush the buffered incoming links second.
+                    // If we still exceed the limit, flush the buffered outgoing links second.
                     if memory_checker.get() > memory_limit {
-                        info!("flushing buffered incoming links due to reaching memory limit...");
-                        let incoming_buffer_taken =
-                            mem::replace(&mut *incoming_buffer_c.lock().unwrap(), HashMap::new());
-                        incoming_count += txn.insert_incoming(incoming_buffer_taken)?;
+                        info!("flushing buffered outgoing links due to reaching memory limit...");
+                        let outgoing_buffer_taken =
+                            mem::replace(&mut *outgoing_buffer_c.lock().unwrap(), HashMap::new());
+                        outgoing_count += txn.insert_outgoing(outgoing_buffer_taken)?;
                     }
                 }
 
