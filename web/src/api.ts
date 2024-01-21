@@ -76,7 +76,7 @@ export abstract class Api {
     resultLimit: number,
     abort: AbortSignal,
   ) => {
-    const url = `https://${languageCode}.wikipedia.org/w/api.php?origin=*&action=query&list=prefixsearch&pslimit=${resultLimit}&pssearch=${searchString}&format=json`;
+    const url = `https://${languageCode}.wikipedia.org/w/rest.php/v1/search/title?q=${searchString}&limit=${resultLimit}`;
     return this.get(url, Schema.WikipediaSearch, abort);
   };
 }
@@ -203,16 +203,12 @@ export abstract class Schema {
 
   static WikipediaSearch = z
     .object({
-      query: z.object({
-        prefixsearch: z.array(
-          z
-            .object({
-              pageid: this.Id,
-              title: this.Title,
-            })
-            .transform((p) => ({ id: p.pageid, title: p.title })),
-        ),
-      }),
+      pages: z.array(
+        z.object({
+          id: this.Id,
+          title: this.Title,
+        }),
+      ),
     })
-    .transform((obj) => obj.query.prefixsearch);
+    .transform((obj) => obj.pages);
 }
