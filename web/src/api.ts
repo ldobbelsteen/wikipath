@@ -1,12 +1,6 @@
 import { z } from "zod";
 import { flattenUnique, pseudoRandomShuffle } from "./misc";
 
-// TODO: add short-term caching for list_database
-// TODO: add long-term caching to shortest_paths
-// TODO: add database date to shortest_paths call for invalidation
-// TODO: add short-term caching for pageTitles calls
-// TODO: add short-term caching for suggestions calls
-// TODO: store page titles from pageTitles and suggestions responses in localstorage as cache layer
 export abstract class Api {
   private static headers = {
     "Api-User-Agent":
@@ -54,20 +48,42 @@ export abstract class Api {
     return this.get(url, Schema.WikipediaRandom);
   };
 
-  static pageTitles = async (
+  static titles = async (
     languageCode: string,
     pageIds: number[],
   ): Promise<Record<number, string>> => {
-    if (pageIds.length > 50) {
-      const left = pageIds.slice(0, 50);
-      const right = pageIds.slice(50);
-      const leftResult = await this.pageTitles(languageCode, left);
-      const rightResult = await this.pageTitles(languageCode, right);
-      return Promise.resolve(Object.assign({}, leftResult, rightResult));
+    const result: Record<number, string> = {};
+
+    const unknownLocally = pageIds.filter((pageId) => {
+      const cached = localStorage.getItem(pageId.toString());
+      if (cached) {
+        result[pageId] = cached;
+        return false;
+      }
+      return true;
+    });
+
+    async function fetchTitles(ids: number[]) {
+      if (ids.length === 0) return;
+      const limit = 50;
+      if (ids.length > limit) {
+        const right = ids.slice(limit);
+        const left = ids.slice(0, limit);
+        await fetchTitles(right);
+        await fetchTitles(left);
+      } else {
+        const delimited = ids.join("|");
+        const url = `https://${languageCode}.wikipedia.org/w/api.php?origin=*&action=query&format=json&pageids=${delimited}`;
+        const titles = await Api.get(url, Schema.WikipediaTitles);
+        Object.entries(titles).forEach(([id, title]) => {
+          localStorage.setItem(id, title);
+          result[parseInt(id)] = title;
+        });
+      }
     }
-    const delimitedPages = pageIds.join("|");
-    const url = `https://${languageCode}.wikipedia.org/w/api.php?origin=*&action=query&format=json&pageids=${delimitedPages}`;
-    return this.get(url, Schema.WikipediaTitles);
+
+    await fetchTitles(unknownLocally);
+    return result;
   };
 
   static suggestions = (
@@ -130,7 +146,7 @@ export abstract class Schema {
         pathCount: number;
       }> => {
         const rawPaths = this.extractPaths(graph, 8);
-        const titles = await Api.pageTitles(
+        const titles = await Api.titles(
           graph.languageCode,
           flattenUnique(rawPaths),
         );
