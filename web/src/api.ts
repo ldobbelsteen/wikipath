@@ -45,7 +45,7 @@ export abstract class Api {
     sourceId: number,
     targetId: number,
   ) => {
-    const url = `/api/shortest_paths?language=${database.languageCode}&source=${sourceId}&target=${targetId}`;
+    const url = `/api/shortest_paths?language-code=${database.languageCode}&dump-date=${database.dumpDate}&source=${sourceId}&target=${targetId}`;
     return this.get(url, Schema.Paths);
   };
 
