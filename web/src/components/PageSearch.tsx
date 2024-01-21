@@ -8,7 +8,7 @@ import { Button } from "./generic/Button";
 import { InputImage } from "./generic/InputImage";
 import { InputText } from "./generic/InputText";
 
-const SEARCH_DEBOUNCE_MS = 300;
+const SEARCH_DEBOUNCE_MS = 400;
 
 export interface SearchState {
   search: string;
