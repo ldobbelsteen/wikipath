@@ -1,10 +1,16 @@
 import { z } from "zod";
 import { flattenUnique, pseudoRandomShuffle } from "./misc";
 
-export abstract class HTTP {
+// TODO: add short-term caching for list_database
+// TODO: add long-term caching to shortest_paths
+// TODO: add database date to shortest_paths call for invalidation
+// TODO: add short-term caching for pageTitles calls
+// TODO: add short-term caching for suggestions calls
+// TODO: store page titles from pageTitles and suggestions responses in localstorage as cache layer
+export abstract class Api {
   private static headers = {
     "Api-User-Agent":
-      "Wikipath/1.0 (https://github.com/ldobbelsteen/wikipath/)",
+      "Wikipath/1.1 (https://github.com/ldobbelsteen/wikipath/)",
   };
 
   private static get = async <T, U>(
@@ -35,11 +41,11 @@ export abstract class HTTP {
   };
 
   static shortestPaths = (
-    languageCode: string,
+    database: Database,
     sourceId: number,
     targetId: number,
   ) => {
-    const url = `/api/shortest_paths?language=${languageCode}&source=${sourceId}&target=${targetId}`;
+    const url = `/api/shortest_paths?language=${database.languageCode}&source=${sourceId}&target=${targetId}`;
     return this.get(url, Schema.Paths);
   };
 
@@ -124,7 +130,7 @@ export abstract class Schema {
         pathCount: number;
       }> => {
         const rawPaths = this.extractPaths(graph, 8);
-        const titles = await HTTP.pageTitles(
+        const titles = await Api.pageTitles(
           graph.languageCode,
           flattenUnique(rawPaths),
         );
