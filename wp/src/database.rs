@@ -1,7 +1,6 @@
 use crate::memory::ProcessMemoryUsageChecker;
 use anyhow::{anyhow, Result};
 use hashbrown::HashMap;
-use itertools::Itertools;
 use log::info;
 use redb::{ReadOnlyTable, ReadableTable, Table, TableDefinition};
 use regex::Regex;
@@ -157,7 +156,7 @@ impl<'db> WriteTransaction<'db> {
 
 #[derive(Debug)]
 pub struct BuildTransaction<'db, 'txn> {
-    redirects: Table<'db, 'txn, u32, u32>,
+    redirects: Table<'db, 'txn, PageId, PageId>,
     incoming: Table<'db, 'txn, PageId, Vec<PageId>>,
     outgoing: Table<'db, 'txn, PageId, Vec<PageId>>,
 }
@@ -176,22 +175,19 @@ impl<'db, 'txn> BuildTransaction<'db, 'txn> {
         let mut removed = 0;
         let mut added = 0;
 
-        for (target, sources) in incoming {
-            let new_sources: Vec<PageId> = {
-                if let Some(existing) = self.incoming.get(target)? {
-                    let existing = existing.value();
-                    removed += existing.len();
-                    existing
-                        .into_iter()
-                        .chain(sources.into_iter())
-                        .unique()
-                        .collect()
+        for (target, mut sources) in incoming {
+            if let Some(existing) = self.incoming.get(target)? {
+                let mut existing = existing.value();
+                removed += existing.len();
+                if existing.len() > sources.len() {
+                    existing.extend(sources);
+                    sources = existing;
                 } else {
-                    sources.into_iter().unique().collect()
+                    sources.extend(existing);
                 }
-            };
-            added += new_sources.len();
-            self.incoming.insert(target, new_sources)?;
+            }
+            added += sources.len();
+            self.incoming.insert(target, sources)?;
         }
 
         Ok(added - removed)
@@ -201,22 +197,19 @@ impl<'db, 'txn> BuildTransaction<'db, 'txn> {
         let mut removed = 0;
         let mut added = 0;
 
-        for (source, targets) in outgoing {
-            let new_targets: Vec<PageId> = {
-                if let Some(existing) = self.outgoing.get(source)? {
-                    let existing = existing.value();
-                    removed += existing.len();
-                    existing
-                        .into_iter()
-                        .chain(targets.into_iter())
-                        .unique()
-                        .collect()
+        for (source, mut targets) in outgoing {
+            if let Some(existing) = self.outgoing.get(source)? {
+                let mut existing = existing.value();
+                removed += existing.len();
+                if existing.len() > targets.len() {
+                    existing.extend(targets);
+                    targets = existing;
                 } else {
-                    targets.into_iter().unique().collect()
+                    targets.extend(existing);
                 }
-            };
-            added += new_targets.len();
-            self.outgoing.insert(source, new_targets)?;
+            }
+            added += targets.len();
+            self.outgoing.insert(source, targets)?;
         }
 
         Ok(added - removed)
