@@ -12,9 +12,8 @@ import {
   zoom,
 } from "d3";
 import { SimulationLinkDatum, SimulationNodeDatum } from "d3-force";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef } from "react";
 import { Paths } from "../api";
-import Loading from "../assets/loading.svg";
 
 type Link = SimulationLinkDatum<Node>;
 interface Node extends SimulationNodeDatum {
@@ -23,42 +22,24 @@ interface Node extends SimulationNodeDatum {
   degree: number;
 }
 
-export const Graph = (props: {
-  paths: Paths | string | undefined;
-  isLoading: boolean;
+export const PathsGraph = (props: {
+  paths?: Paths | "loading";
+  className: string;
 }) => {
   const ref = useRef<SVGSVGElement>(null);
-  const [text, setText] = useState("");
 
-  /** Re-render on data change */
+  const { paths } = props;
+
+  /** Re-render graph on data change */
   useEffect(() => {
-    if (props.isLoading) return;
+    /** Clear any previous graph from the svg. */
     if (ref.current === null) return;
     const svg = select(ref.current);
-    svg.attr("width", "100%").attr("height", "100%");
     svg.selectAll("*").remove();
 
-    const { paths } = props;
-    if (!paths) return;
-    if (typeof paths === "string") {
-      setText(paths);
+    if (paths === "loading" || paths === undefined || paths.count === 0) {
       return;
     }
-
-    /** Don't show graph when no paths are found */
-    if (paths.pathCount === 0) {
-      setText("No path found");
-      return;
-    }
-
-    /** Show message based on graph content */
-    let message = `Found ${paths.pathCount} ${
-      paths.pathCount === 1 ? "path" : "paths"
-    } of degree ${paths.pathLengths}.`;
-    if (paths.pathCount > paths.paths.length) {
-      message += ` Only ${paths.paths.length} of them are shown below.`;
-    }
-    setText(message);
 
     /** Extract nodes and links for D3 from the paths */
     const nodes: Node[] = [];
@@ -103,8 +84,10 @@ export const Graph = (props: {
       .attr("id", String)
       .attr("viewBox", "0 -5 10 10")
       .attr("refX", 19)
-      .attr("markerWidth", 5)
-      .attr("markerHeight", 5)
+      .attr("markerWidth", 6)
+      .attr("markerHeight", 6)
+      .attr("fill", "white")
+      .attr("stroke", "white")
       .attr("orient", "auto")
       .append("svg:path")
       .attr("d", "M0,-5L10,0L0,5");
@@ -117,8 +100,8 @@ export const Graph = (props: {
       .data(links)
       .enter()
       .append("line")
-      .attr("stroke", "black")
-      .attr("stroke-width", 2)
+      .attr("stroke", "white")
+      .attr("stroke-width", 1.5)
       .attr("marker-end", "url(#arrowhead)");
 
     /** Allow dragging nodes and their titles */
@@ -211,7 +194,8 @@ export const Graph = (props: {
         }
         return text;
       })
-      .attr("style", "user-select: none")
+      .style("user-select", "none")
+      .style("fill", "white")
       .attr("x", 16)
       .attr("y", 5);
 
@@ -224,23 +208,7 @@ export const Graph = (props: {
         .attr("y2", (node: Link) => (node.target as Node).y?.toString() || "");
       node.attr("transform", (d) => `translate(${d.x || 0},${d.y || 0})`);
     });
-  }, [props]);
+  }, [paths]);
 
-  /** Show graph, loading or nothing based on props */
-  if (props.isLoading) {
-    return (
-      <div className="flex flex-col grow items-center">
-        <img className="w-16 h-16" src={Loading} alt="Loading..."></img>
-      </div>
-    );
-  } else {
-    return (
-      <div className="flex flex-col grow">
-        <b>{text}</b>
-        <div className="grow">
-          <svg ref={ref}></svg>
-        </div>
-      </div>
-    );
-  }
+  return <svg className={props.className} ref={ref} />;
 };

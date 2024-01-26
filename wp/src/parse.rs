@@ -1,7 +1,7 @@
 use crate::{database::PageId, dump::Dump};
 use anyhow::{anyhow, Result};
 use flate2::read::GzDecoder;
-use hashbrown::HashMap;
+use hashbrown::{HashMap, HashSet};
 use log::{debug, warn};
 use regex::bytes::Regex;
 use std::{
@@ -262,18 +262,27 @@ impl Dump {
 /// in-place.
 pub fn cleanup_redirects(redirs: &mut HashMap<PageId, PageId>) {
     let mut updates = HashMap::new();
+    let mut removals = HashSet::new();
+
     loop {
         for (source, target) in redirs.iter() {
-            if let Some(new_target) = redirs.get(target) {
+            if *source == *target {
+                removals.insert(*source);
+            } else if let Some(new_target) = redirs.get(target) {
                 updates.insert(*source, *new_target);
             }
         }
 
-        if updates.is_empty() {
+        if updates.is_empty() && removals.is_empty() {
             break;
         }
+
         for (source, target) in updates.drain() {
             redirs.insert(source, target);
+        }
+
+        for source in removals.drain() {
+            redirs.remove(&source);
         }
     }
 }

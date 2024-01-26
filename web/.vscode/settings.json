@@ -13,7 +13,7 @@
   "[typescriptreact]": {
     "editor.defaultFormatter": "dbaeumer.vscode-eslint"
   },
-  "files.associations": {
-    "*.css": "postcss"
-  }
+  "[json]": {
+    "editor.defaultFormatter": "vscode.json-language-features",
+  },
 }

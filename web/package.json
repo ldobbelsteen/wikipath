@@ -1,8 +1,10 @@
 {
   "scripts": {
     "dev": "vite dev",
-    "build": "vite build"
+    "build": "vite build",
+    "preview": "vite preview"
   },
+  "type": "module",
   "dependencies": {
     "@types/d3": "^7.4.3",
     "@types/react": "^18.2.46",
@@ -24,39 +26,11 @@
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-hot-toast": "^2.4.1",
+    "tailwind-merge": "^2.2.1",
     "tailwindcss": "^3.4.0",
     "typescript": "^5.3.3",
-    "vite": "^5.0.10",
+    "vite": "^5.0.12",
+    "vite-plugin-eslint": "^1.8.1",
     "zod": "^3.22.4"
-  },
-  "eslintConfig": {
-    "extends": [
-      "eslint:recommended",
-      "plugin:import/recommended",
-      "plugin:import/typescript",
-      "plugin:@typescript-eslint/recommended",
-      "plugin:@typescript-eslint/recommended-requiring-type-checking",
-      "plugin:react/recommended",
-      "plugin:react-hooks/recommended",
-      "plugin:jsx-a11y/recommended",
-      "plugin:promise/recommended",
-      "plugin:prettier/recommended"
-    ],
-    "parserOptions": {
-      "project": [
-        "./tsconfig.json"
-      ]
-    },
-    "rules": {
-      "import/order": [
-        "warn",
-        {
-          "alphabetize": {
-            "order": "asc"
-          }
-        }
-      ]
-    }
-  },
-  "type": "module"
+  }
 }

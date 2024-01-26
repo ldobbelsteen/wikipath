@@ -13,7 +13,7 @@ use std::thread::{Scope, ScopedJoinHandle};
 use std::time::Duration;
 use std::{mem, vec};
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone, PartialEq, Eq, Hash)]
 #[serde(rename_all = "camelCase")]
 pub struct Metadata {
     pub language_code: String,

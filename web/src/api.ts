@@ -1,10 +1,35 @@
 import { z } from "zod";
-import { flattenUnique, pseudoRandomShuffle } from "./misc";
+import { flattenUnique } from "./misc";
+import { getTitle, storeTitle } from "./storage";
 
-export abstract class HTTP {
+export type Page = {
+  id: number;
+  title: string;
+};
+
+export type Database = {
+  languageCode: string;
+  dumpDate: string;
+};
+
+export type Paths = {
+  languageCode: string;
+  dumpDate: string;
+
+  source: Page;
+  sourceIsRedirect: boolean;
+  target: Page;
+  targetIsRedirect: boolean;
+
+  paths: Page[][];
+  length: number;
+  count: number;
+};
+
+export abstract class Api {
   private static headers = {
     "Api-User-Agent":
-      "Wikipath/1.0 (https://github.com/ldobbelsteen/wikipath/)",
+      "Wikipath/1.1 (https://github.com/ldobbelsteen/wikipath/)",
   };
 
   private static get = async <T, U>(
@@ -29,55 +54,92 @@ export abstract class HTTP {
     }
   };
 
-  static listDatabases = () => {
+  static listDatabases = async (): Promise<Database[]> => {
     const url = "/api/list_databases";
-    return this.get(url, z.array(Schema.Database));
+    const result = await this.get(url, z.array(Schema.Database));
+    return result;
   };
 
-  static shortestPaths = (
-    languageCode: string,
+  static shortestPaths = async (
+    database: Database,
     sourceId: number,
     targetId: number,
-  ) => {
-    const url = `/api/shortest_paths?language=${languageCode}&source=${sourceId}&target=${targetId}`;
-    return this.get(url, Schema.Paths);
+  ): Promise<Paths> => {
+    const url = `/api/shortest_paths?language-code=${database.languageCode}&dump-date=${database.dumpDate}&source=${sourceId}&target=${targetId}`;
+    const result = await this.get(url, Schema.Paths);
+    const pathsOfIds = extractFullPaths(result.source, result.links, 8);
+    const titles = await Api.titles(
+      result.languageCode,
+      flattenUnique(pathsOfIds),
+    );
+    const idToPage = (id: number): Page => ({ id, title: titles[id] });
+    return {
+      ...result,
+      source: idToPage(result.source),
+      target: idToPage(result.target),
+      paths: pathsOfIds.map((path) => path.map(idToPage)),
+    };
   };
 
-  static randomPage = (languageCode: string) => {
+  static randomPage = async (languageCode: string): Promise<Page> => {
     const url = `https://${languageCode}.wikipedia.org/w/api.php?origin=*&action=query&format=json&list=random&rnnamespace=0&rnlimit=1`;
-    return this.get(url, Schema.WikipediaRandom);
+    const result = await this.get(url, Schema.WikipediaRandom);
+    storeTitle(result.id.toString(), result.title);
+    return result;
   };
 
-  static pageTitles = async (
+  static titles = async (
     languageCode: string,
     pageIds: number[],
   ): Promise<Record<number, string>> => {
-    if (pageIds.length > 50) {
-      const left = pageIds.slice(0, 50);
-      const right = pageIds.slice(50);
-      const leftResult = await this.pageTitles(languageCode, left);
-      const rightResult = await this.pageTitles(languageCode, right);
-      return Promise.resolve(Object.assign({}, leftResult, rightResult));
+    const result: Record<number, string> = {};
+
+    const unknownLocally = pageIds.filter((pageId) => {
+      const cached = getTitle(pageId.toString());
+      if (cached) {
+        result[pageId] = cached;
+        return false;
+      }
+      return true;
+    });
+
+    async function fetchTitles(ids: number[]) {
+      if (ids.length === 0) return;
+      const limit = 50;
+      if (ids.length > limit) {
+        const right = ids.slice(limit);
+        const left = ids.slice(0, limit);
+        await fetchTitles(right);
+        await fetchTitles(left);
+      } else {
+        const delimited = ids.join("|");
+        const url = `https://${languageCode}.wikipedia.org/w/api.php?origin=*&action=query&format=json&pageids=${delimited}`;
+        const titles = await Api.get(url, Schema.WikipediaTitles);
+        Object.entries(titles).forEach(([id, title]) => {
+          storeTitle(id, title);
+          result[parseInt(id)] = title;
+        });
+      }
     }
-    const delimitedPages = pageIds.join("|");
-    const url = `https://${languageCode}.wikipedia.org/w/api.php?origin=*&action=query&format=json&pageids=${delimitedPages}`;
-    return this.get(url, Schema.WikipediaTitles);
+
+    await fetchTitles(unknownLocally);
+    return result;
   };
 
-  static suggestions = (
+  static suggestions = async (
     languageCode: string,
     searchString: string,
     resultLimit: number,
     abort: AbortSignal,
-  ) => {
-    const url = `https://${languageCode}.wikipedia.org/w/api.php?origin=*&action=query&list=prefixsearch&pslimit=${resultLimit}&pssearch=${searchString}&format=json`;
-    return this.get(url, Schema.WikipediaSearch, abort);
+  ): Promise<Page[]> => {
+    const url = `https://${languageCode}.wikipedia.org/w/rest.php/v1/search/title?q=${searchString}&limit=${resultLimit}`;
+    const result = await this.get(url, Schema.WikipediaSearch, abort);
+    for (const page of result) {
+      storeTitle(page.id.toString(), page.title);
+    }
+    return result;
   };
 }
-
-export type Page = z.infer<typeof Schema.Page>;
-export type Database = z.infer<typeof Schema.Database>;
-export type Paths = z.infer<typeof Schema.Paths>;
 
 export abstract class Schema {
   static Id = z.number().int().nonnegative();
@@ -93,80 +155,23 @@ export abstract class Schema {
     dumpDate: z.string().min(1),
   });
 
-  static Paths = z
-    .object({
-      source: this.Id,
-      sourceIsRedirect: z.boolean(),
-      target: this.Id,
-      targetIsRedirect: z.boolean(),
-      languageCode: z.string().min(1),
-      links: z.record(
-        z
-          .string()
-          .min(1)
-          .transform((s) => parseInt(s)),
-        z.array(this.Id),
-      ),
-      pathLengths: z.number().int().nonnegative(),
-      pathCount: z.number().int().nonnegative(),
-    })
-    .transform(
-      async (
-        graph,
-      ): Promise<{
-        source: Page;
-        sourceIsRedirect: boolean;
-        target: Page;
-        targetIsRedirect: boolean;
-        languageCode: string;
-        paths: Page[][];
-        pathLengths: number;
-        pathCount: number;
-      }> => {
-        const rawPaths = this.extractPaths(graph, 8);
-        const titles = await HTTP.pageTitles(
-          graph.languageCode,
-          flattenUnique(rawPaths),
-        );
-        const idToPage = (id: number) => ({ id: id, title: titles[id] });
-        const paths = rawPaths.map((path) => path.map(idToPage));
-        return {
-          source: idToPage(graph.source),
-          sourceIsRedirect: graph.sourceIsRedirect,
-          target: idToPage(graph.target),
-          targetIsRedirect: graph.targetIsRedirect,
-          languageCode: graph.languageCode,
-          paths: paths,
-          pathLengths: graph.pathLengths,
-          pathCount: graph.pathCount,
-        };
-      },
-    );
-
-  private static extractPaths = (
-    graph: z.input<typeof this.Paths>,
-    maxPaths: number,
-  ): number[][] => {
-    const result: number[][] = [];
-    const recurse = (page: number, path: number[]): boolean => {
-      let outgoing = graph.links[page];
-      if (outgoing && outgoing.length > 0) {
-        outgoing = pseudoRandomShuffle(outgoing);
-        for (let i = 0; i < outgoing.length; i++) {
-          const maxReached = recurse(outgoing[i], [...path, outgoing[i]]);
-          if (maxReached) {
-            return true;
-          }
-        }
-      } else {
-        result.push(path);
-        if (result.length >= maxPaths) return true;
-      }
-      return false;
-    };
-    recurse(graph.source, [graph.source]);
-    return result;
-  };
+  static Paths = z.object({
+    source: this.Id,
+    sourceIsRedirect: z.boolean(),
+    target: this.Id,
+    targetIsRedirect: z.boolean(),
+    links: z.record(
+      z
+        .string()
+        .min(1)
+        .transform((s) => parseInt(s)),
+      z.array(this.Id),
+    ),
+    languageCode: z.string().min(1),
+    dumpDate: z.string().min(1),
+    length: z.number().int().nonnegative(),
+    count: z.number().int().nonnegative(),
+  });
 
   static WikipediaRandom = z
     .object({
@@ -197,16 +202,40 @@ export abstract class Schema {
 
   static WikipediaSearch = z
     .object({
-      query: z.object({
-        prefixsearch: z.array(
-          z
-            .object({
-              pageid: this.Id,
-              title: this.Title,
-            })
-            .transform((p) => ({ id: p.pageid, title: p.title })),
-        ),
-      }),
+      pages: z.array(
+        z.object({
+          id: this.Id,
+          title: this.Title,
+        }),
+      ),
     })
-    .transform((obj) => obj.query.prefixsearch);
+    .transform((obj) => obj.pages);
+}
+
+function extractFullPaths(
+  source: number,
+  links: Record<number, number[]>,
+  maxPaths: number,
+): number[][] {
+  const result: number[][] = [];
+  const recurse = (current: number, currentPath: number[]): boolean => {
+    const targets = links[current];
+    if (targets && targets.length > 0) {
+      targets.sort();
+      for (const target of targets) {
+        const maxReached = recurse(target, [...currentPath, target]);
+        if (maxReached) {
+          return true;
+        }
+      }
+    } else {
+      result.push(currentPath);
+      if (result.length >= maxPaths) {
+        return true;
+      }
+    }
+    return false;
+  };
+  recurse(source, [source]);
+  return result;
 }

@@ -7,13 +7,15 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.79"
-axum = "0.7.3"
-clap = { version = "4.4.14", features = ["derive"] }
-env_logger = "0.10.1"
+axum = "0.7.4"
+clap = { version = "4.4.18", features = ["derive"] }
+env_logger = "0.11.0"
 humantime = "2.1.0"
 log = "0.4.20"
+mime_guess = "2.0.4"
 num_cpus = "1.16.0"
+rust-embed = "8.2.0"
 serde = { version = "1.0.195", features = ["derive"] }
 tokio = { version = "1.35.1", features = ["full"] }
-tower-http = { version = "0.5.1", features = ["fs"] }
+tower-http = { version = "0.5.1", features = ["fs", "timeout", "set-header"] }
 wp = { path = "wp" }

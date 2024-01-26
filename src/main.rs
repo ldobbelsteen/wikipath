@@ -38,9 +38,6 @@ enum Action {
         /// Directory of databases.
         #[clap(short, default_value = "./databases")]
         databases: String,
-        /// Directory to web assets.
-        #[clap(short, default_value = "./web/dist")]
-        web: String,
         /// Port on which to serve the web interface and api.
         #[clap(short, default_value_t = 1789)]
         port: u16,
@@ -83,14 +80,9 @@ async fn main() -> Result<()> {
                 .await?;
             }
         }
-        Action::Serve {
-            databases,
-            web,
-            port,
-        } => {
+        Action::Serve { databases, port } => {
             let databases_dir = Path::new(&databases);
-            let web_dir = Path::new(&web);
-            serve::serve(databases_dir, web_dir, port).await?;
+            serve::serve(databases_dir, port).await?;
         }
     }
 
