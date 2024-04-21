@@ -74,14 +74,14 @@ impl Database {
     }
 
     /// Begin a read transaction on the database.
-    pub fn begin_read(&self) -> Result<ReadTransaction<'_>> {
+    pub fn begin_read(&self) -> Result<ReadTransaction> {
         Ok(ReadTransaction {
             inner: self.inner.begin_read()?,
         })
     }
 
     /// Begin a write transaction on the database.
-    pub fn begin_write(&self) -> Result<WriteTransaction<'_>> {
+    pub fn begin_write(&self) -> Result<WriteTransaction> {
         Ok(WriteTransaction {
             inner: self.inner.begin_write()?,
         })
@@ -94,12 +94,12 @@ impl Database {
     }
 }
 
-pub struct ReadTransaction<'db> {
-    inner: redb::ReadTransaction<'db>,
+pub struct ReadTransaction {
+    inner: redb::ReadTransaction,
 }
 
-impl<'db> ReadTransaction<'db> {
-    pub fn begin_serve(&'db self) -> Result<ServeTransaction<'db>> {
+impl ReadTransaction {
+    pub fn begin_serve(&self) -> Result<ServeTransaction> {
         Ok(ServeTransaction {
             incoming: self.inner.open_table(INCOMING)?,
             outgoing: self.inner.open_table(OUTGOING)?,
@@ -109,13 +109,13 @@ impl<'db> ReadTransaction<'db> {
 }
 
 #[derive(Debug)]
-pub struct ServeTransaction<'txn> {
-    incoming: ReadOnlyTable<'txn, PageId, Vec<PageId>>,
-    outgoing: ReadOnlyTable<'txn, PageId, Vec<PageId>>,
-    redirects: ReadOnlyTable<'txn, PageId, PageId>,
+pub struct ServeTransaction {
+    incoming: ReadOnlyTable<PageId, Vec<PageId>>,
+    outgoing: ReadOnlyTable<PageId, Vec<PageId>>,
+    redirects: ReadOnlyTable<PageId, PageId>,
 }
 
-impl<'txn> ServeTransaction<'txn> {
+impl ServeTransaction {
     pub fn incoming_links(&self, target: PageId) -> Result<Vec<PageId>> {
         match self.incoming.get(target)? {
             Some(res) => Ok(res.value()),
@@ -135,12 +135,12 @@ impl<'txn> ServeTransaction<'txn> {
     }
 }
 
-pub struct WriteTransaction<'db> {
-    inner: redb::WriteTransaction<'db>,
+pub struct WriteTransaction {
+    inner: redb::WriteTransaction,
 }
 
-impl<'db> WriteTransaction<'db> {
-    pub fn begin_build<'txn>(&'txn self) -> Result<BuildTransaction<'db, 'txn>> {
+impl WriteTransaction {
+    pub fn begin_build(&self) -> Result<BuildTransaction> {
         Ok(BuildTransaction {
             redirects: self.inner.open_table(REDIRECTS)?,
             incoming: self.inner.open_table(INCOMING)?,
@@ -155,13 +155,13 @@ impl<'db> WriteTransaction<'db> {
 }
 
 #[derive(Debug)]
-pub struct BuildTransaction<'db, 'txn> {
-    redirects: Table<'db, 'txn, PageId, PageId>,
-    incoming: Table<'db, 'txn, PageId, Vec<PageId>>,
-    outgoing: Table<'db, 'txn, PageId, Vec<PageId>>,
+pub struct BuildTransaction<'txn> {
+    redirects: Table<'txn, PageId, PageId>,
+    incoming: Table<'txn, PageId, Vec<PageId>>,
+    outgoing: Table<'txn, PageId, Vec<PageId>>,
 }
 
-impl<'db, 'txn> BuildTransaction<'db, 'txn> {
+impl<'txn> BuildTransaction<'txn> {
     pub fn insert_redirects(&mut self, redirs: &HashMap<PageId, PageId>) -> Result<()> {
         for (source, target) in redirs {
             if self.redirects.insert(source, target)?.is_some() {
@@ -228,8 +228,8 @@ impl<'scope> BufferedLinkInserter<'scope> {
     /// Create a buffered link inserter from a build transaction. This caches link inserts in a
     /// buffer and periodically flushes the buffer to disk if the specified number of bytes of
     /// memory is exceeded for the entire process.
-    pub fn for_txn<'env, 'db, 'txn>(
-        txn: &'env mut BuildTransaction<'db, 'txn>,
+    pub fn for_txn<'env, 'txn>(
+        txn: &'env mut BuildTransaction<'txn>,
         memory_limit: u64,
         scope: &'scope Scope<'scope, 'env>,
     ) -> Result<Self> {

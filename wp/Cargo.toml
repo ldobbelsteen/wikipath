@@ -4,17 +4,17 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-anyhow = "1.0.79"
-crossbeam-channel = "0.5.11"
+anyhow = "1.0.82"
+crossbeam-channel = "0.5.12"
 data-encoding = "2.5.0"
 flate2 = "1.0.28"
 futures = "0.3.30"
 futures-util = "0.3.30"
 hashbrown = "0.14.3"
-log = "0.4.20"
-redb = "1.5.0"
-regex = "1.10.3"
-reqwest = { version = "0.11.23", features = ["stream"] }
-ring = "0.17.7"
-serde = { version = "1.0.195", features = ["derive"] }
-sysinfo = "0.30.5"
+log = "0.4.21"
+redb = "2.1.0"
+regex = "1.10.4"
+reqwest = { version = "0.12.4", features = ["stream"] }
+ring = "0.17.8"
+serde = { version = "1.0.198", features = ["derive"] }
+sysinfo = "0.30.11"
