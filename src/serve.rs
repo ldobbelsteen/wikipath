@@ -141,7 +141,7 @@ pub async fn serve(databases_dir: &Path, listening_port: u16) -> Result<()> {
         .layer(TimeoutLayer::new(Duration::from_secs(10)));
 
     let listener = TcpListener::bind(format!(":::{listening_port}")).await?;
-    info!("listening on port {listening_port}...");
+    info!("listening on http://localhost:{listening_port}...");
     axum::serve(listener, router).await?;
 
     Ok(())
