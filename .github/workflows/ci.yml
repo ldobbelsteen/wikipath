@@ -1,20 +1,43 @@
-name: ci
+name: CI
 on: push
+
 jobs:
-  docker:
+  build-image:
+    name: Build container image
     runs-on: ubuntu-latest
+    env:
+      IMAGE_NAME: wikipath
+      REGISTRY: ghcr.io/ldobbelsteen
     permissions:
       contents: read
       packages: write
     steps:
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - name: Clone the repository
+        id: repository-checkout
+        uses: actions/checkout@v2
+
+      - name: Build image
+        id: image-build
+        uses: redhat-actions/buildah-build@v2
         with:
-          registry: ghcr.io
+          image: ${{ env.IMAGE_NAME }}
+          tags: latest ${{ github.sha }}
+          containerfiles: |
+            ./Containerfile
+      - name: Log in to registry
+        id: registry-login
+        uses: redhat-actions/podman-login@v1
+        with:
+          registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v5
+
+      - name: Push image to registry
+        if : ${{ github.ref == 'refs/heads/main' }}
+        id: image-push
+        uses: redhat-actions/push-to-registry@v2
         with:
-          push: ${{ github.ref == 'refs/heads/main' }}
-          tags: ghcr.io/${{ github.repository }}:latest
+          registry: ${{ env.REGISTRY }}
+          image: ${{ steps.image-build.outputs.image }}
+          tags: ${{ steps.image-build.outputs.tags }}
+          
