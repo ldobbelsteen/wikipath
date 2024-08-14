@@ -44,8 +44,8 @@ impl ExternalDumpFiles {
 }
 
 impl Dump {
-    /// Get information on the newest available dump from Wikimedia.
-    pub async fn get_latest_external(language_code: &str) -> Result<ExternalDumpFiles> {
+    /// Get information from Wikimedia on the given dump.
+    pub async fn get_external(language_code: &str, date_code: &str) -> Result<ExternalDumpFiles> {
         fn find_hash(hashes: &str, re: &Regex) -> Option<ExternalFile> {
             hashes
                 .lines()
@@ -62,7 +62,7 @@ impl Dump {
         }
 
         let url = format!(
-            "https://dumps.wikimedia.org/{language_code}wiki/latest/{language_code}wiki-latest-sha1sums.txt"
+            "https://dumps.wikimedia.org/{language_code}wiki/{date_code}/{language_code}wiki-{date_code}-sha1sums.txt"
         );
         let resp = reqwest::get(url).await?;
         let hashes = resp.text().await?;
@@ -92,14 +92,14 @@ impl Dump {
 
     /// Download all relevant dump files from Wikimedia into a directory.
     pub async fn download_external(dumps_dir: &Path, files: ExternalDumpFiles) -> Result<Self> {
-        info!("downloading latest dump files...");
+        info!("downloading dump files...");
         let (pages, redirects, pagelinks) = try_join!(
             Self::download_external_file(dumps_dir, &files.pages),
             Self::download_external_file(dumps_dir, &files.redirects),
             Self::download_external_file(dumps_dir, &files.pagelinks)
         )?;
 
-        info!("checking latest dump file hashes...");
+        info!("checking dump file hashes...");
         Self::check_file_hash(&pages, &files.pages.hash)?;
         Self::check_file_hash(&redirects, &files.redirects.hash)?;
         Self::check_file_hash(&pagelinks, &files.pagelinks.hash)?;

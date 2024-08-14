@@ -17,9 +17,12 @@ struct Arguments {
 enum Action {
     /// Build Wikipath database(s).
     Build {
-        /// Language(s) to build, separated by commas. Uses ISO codes from <https://en.wikipedia.org/wiki/List_of_Wikipedias>.
+        /// Language(s) to build, separated by commas. Use ISO codes from https://en.wikipedia.org/wiki/List_of_Wikipedias.
         #[clap(long)]
         languages: String,
+        /// Date of the dump to build the database from. Use the dates from e.g. https://dumps.wikimedia.org/enwiki.
+        #[clap(long)]
+        date: String,
         /// Directory to output database(s) to.
         #[clap(long, default_value = "./databases")]
         databases: String,
@@ -56,6 +59,7 @@ async fn main() -> Result<()> {
     match args.action {
         Action::Build {
             languages,
+            date,
             databases,
             dumps,
             threads,
@@ -72,6 +76,7 @@ async fn main() -> Result<()> {
             for language_code in languages.split(',') {
                 build::build(
                     language_code,
+                    &date,
                     databases_dir,
                     &dumps_dir,
                     thread_count,

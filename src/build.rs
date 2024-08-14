@@ -15,6 +15,7 @@ use wp::{cleanup_redirects, BufferedLinkInserter, Database, Dump, Metadata};
 /// ceiling for memory usage.
 pub async fn build(
     language_code: &str,
+    date_code: &str,
     databases_dir: &Path,
     dumps_dir: &Path,
     thread_count: usize,
@@ -23,11 +24,11 @@ pub async fn build(
     let start = Instant::now();
     info!("building '{language_code}' database...");
 
-    info!("getting latest dump information...");
-    let latest = Dump::get_latest_external(language_code).await?;
+    info!("getting dump information...");
+    let external_dump = Dump::get_external(language_code, date_code).await?;
     let metadata = Metadata {
-        language_code: latest.get_language_code(),
-        dump_date: latest.get_dump_date(),
+        language_code: external_dump.get_language_code(),
+        dump_date: external_dump.get_dump_date(),
     };
 
     let tmp_path = databases_dir.join(metadata.to_tmp_name());
@@ -46,7 +47,7 @@ pub async fn build(
     let txn = database.begin_write()?;
     let mut build = txn.begin_build()?;
 
-    let dump = Dump::download_external(dumps_dir, latest).await?;
+    let dump = Dump::download_external(dumps_dir, external_dump).await?;
 
     info!("parsing page dump...");
     let pages = dump.parse_page_dump(thread_count)?;

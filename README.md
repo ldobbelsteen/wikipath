@@ -14,7 +14,7 @@ This will build a binary in the `./target/release` directory with the frontend e
 
 ## Databases
 
-You can have one or more databases served at a time, one for each language. A database contains all redirects and hyperlinks of a Wikipedia, which are used to search for the shortest paths. Databases can be constructed using Wikipedia's [periodic dumps](https://dumps.wikimedia.org/). To build them yourself, the `build` subcommand is included. For more information, use its `--help` option.
+You can have one or more databases served at a time, one for each language. A database contains all redirects and hyperlinks of a Wikipedia, which are used to search for the shortest paths. Databases can be constructed using Wikipedia's periodic dumps (for example, see [here](https://dumps.wikimedia.org/) for the English Wikipedia dumps). To build them yourself, the `build` subcommand is included. For more information, use its `--help` option.
 
 ## Serving
 
@@ -40,5 +40,5 @@ An example of how the image can be used to build databases:
 ```
 docker run --rm -it \
     --volume /path/to/db/directory:/databases \
-    ghcr.io/ldobbelsteen/wikipath build --languages es,de,fr
+    ghcr.io/ldobbelsteen/wikipath build --languages es,de,fr --date 20240501
 ```
