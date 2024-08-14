@@ -12,7 +12,12 @@ export const defaultDatabase = (databases: Database[]) => {
       }
     }
   }
-  return databases[0];
+
+  if (databases.length > 0) {
+    return databases[0];
+  } else {
+    toast.error("No languages available on this server");
+  }
 };
 
 export const DatabaseSelect = (props: {

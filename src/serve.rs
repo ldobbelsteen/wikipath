@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::Result;
 use axum::{
     extract::{Extension, Query},
     http::{
@@ -107,9 +107,6 @@ pub async fn serve(databases_dir: &Path, listening_port: u16) -> Result<()> {
                     }
                 }
             }
-        }
-        if result.is_empty() {
-            bail!("no databases found");
         }
         Arc::new(result)
     };
