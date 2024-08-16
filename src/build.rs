@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use humantime::format_duration;
 use log::{info, warn};
 use std::{
@@ -51,10 +51,20 @@ pub async fn build(
 
     info!("parsing page dump...");
     let pages = dump.parse_page_dump(thread_count)?;
+    if pages.is_empty() {
+        return Err(anyhow!(
+            "no pages found in dump, possibly caused by schema changes"
+        ));
+    }
     info!("{} unique pages found!", pages.len());
 
     info!("parsing redirects dump...");
     let mut redirs = dump.parse_redir_dump(&pages, thread_count)?;
+    if redirs.is_empty() {
+        return Err(anyhow!(
+            "no redirects found in dump, possibly caused by schema changes"
+        ));
+    }
     info!("{} unfiltered redirects found!", redirs.len());
 
     info!("cleaning up redirects...");
@@ -77,6 +87,11 @@ pub async fn build(
         )?;
         info!("inserting remaining buffered links into database...");
         let link_count = buffer.flush()?;
+        if link_count == 0 {
+            return Err(anyhow!(
+                "no links found in dump, possibly caused by schema changes"
+            ));
+        }
         info!("{link_count} links found!");
         Ok(())
     })?;
