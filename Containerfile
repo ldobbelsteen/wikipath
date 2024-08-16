@@ -8,7 +8,6 @@ FROM rust:latest AS bin
 WORKDIR /build
 COPY . .
 COPY --from=web /build/web/dist /build/web/dist
-ENV SKIP_NPM=1
 RUN cargo build --release
 
 FROM debian:latest

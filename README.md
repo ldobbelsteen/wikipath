@@ -4,7 +4,15 @@
 
 ## Building
 
-The project consists of a backend and a frontend. To build, `npm` and `cargo` are required. Then, run the following command:
+The project consists of a backend and a frontend. To build, `npm` and `cargo` are required. First, to build the frontend, run:
+
+```
+cd web
+npm install
+npm run build
+```
+
+Then, to build the backend, back in the root of the project run:
 
 ```
 cargo build --release
