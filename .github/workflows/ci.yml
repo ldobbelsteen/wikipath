@@ -24,6 +24,7 @@ jobs:
           tags: latest ${{ github.sha }}
           containerfiles: |
             ./Containerfile
+
       - name: Log in to registry
         id: registry-login
         uses: redhat-actions/podman-login@v1
@@ -40,4 +41,3 @@ jobs:
           registry: ${{ env.REGISTRY }}
           image: ${{ steps.image-build.outputs.image }}
           tags: ${{ steps.image-build.outputs.tags }}
-          

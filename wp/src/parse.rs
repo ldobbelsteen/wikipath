@@ -1,4 +1,7 @@
-use crate::{database::PageId, dump::Dump};
+use crate::{
+    database::{LinkTargetId, PageId},
+    dump::TableDumpFiles,
+};
 use anyhow::{anyhow, Result};
 use flate2::read::GzDecoder;
 use hashbrown::{HashMap, HashSet};
@@ -20,11 +23,11 @@ pub struct Chunk {
     end: usize,
 }
 
-impl Dump {
-    pub fn parse_page_dump(&self, thread_count: usize) -> Result<HashMap<String, PageId>> {
+impl TableDumpFiles {
+    pub fn parse_page_table_dump(&self, thread_count: usize) -> Result<HashMap<String, PageId>> {
         let result = Arc::new(Mutex::new(HashMap::new()));
         Self::parse_dump_file(
-            self.pages.as_path(),
+            self.page.as_path(),
             &Regex::new(
                 r"\(([0-9]{1,10}),0,'(.{1,255}?)',[01],[01],0.[0-9]{1,32}?,'[0-9]{14}',(?:'[0-9]{14}'|NULL),[0-9]{1,10},[0-9]{1,10},'wikitext',NULL\)",
             )?, // https://www.mediawiki.org/wiki/Manual:Page_table
@@ -52,18 +55,18 @@ impl Dump {
             thread_count,
         )?;
         Ok(Arc::into_inner(result)
-            .ok_or(anyhow!("failed to unwrap page result arc"))?
+            .ok_or(anyhow!("failed to unwrap result arc"))?
             .into_inner()?)
     }
 
-    pub fn parse_redir_dump(
+    pub fn parse_redirect_table_dump(
         &self,
-        pages: &HashMap<String, PageId>,
+        title_to_id: &HashMap<String, PageId>,
         thread_count: usize,
     ) -> Result<HashMap<PageId, PageId>> {
         let result = Arc::new(Mutex::new(HashMap::new()));
         Self::parse_dump_file(
-            self.redirects.as_path(),
+            self.redirect.as_path(),
             &Regex::new(r"\(([0-9]{1,10}),0,'(.{1,255}?)','.{0,32}?','.{0,255}?'\)")?, // https://www.mediawiki.org/wiki/Manual:Redirect_table
             1 + 10 + 4 + 255 + 3 + 32 + 3 + 255 + 2,
             |caps| {
@@ -76,7 +79,7 @@ impl Dump {
                 let target: PageId = {
                     let m = caps.get(2).unwrap(); // Capture 2 always participates in the match
                     let str = str::from_utf8(m.as_bytes())?;
-                    if let Some(id) = pages.get(str) {
+                    if let Some(id) = title_to_id.get(str) {
                         *id
                     } else {
                         debug!("redirect target title '{}' not known", str);
@@ -104,14 +107,60 @@ impl Dump {
             thread_count,
         )?;
         Ok(Arc::into_inner(result)
-            .ok_or(anyhow!("failed to unwrap redir result arc"))?
+            .ok_or(anyhow!("failed to unwrap result arc"))?
             .into_inner()?)
     }
 
-    pub fn parse_link_dump<F>(
+    pub fn parse_linktarget_table_dump(
         &self,
-        pages: &HashMap<String, PageId>,
-        redirs: &HashMap<PageId, PageId>,
+        title_to_id: &HashMap<String, PageId>,
+        thread_count: usize,
+    ) -> Result<HashMap<LinkTargetId, PageId>> {
+        let result = Arc::new(Mutex::new(HashMap::new()));
+        Self::parse_dump_file(
+            self.linktarget.as_path(),
+            &Regex::new(r"\(([0-9]{1,20}),0,'(.{1,255}?)'\)")?, // https://www.mediawiki.org/wiki/Manual:Linktarget_table
+            1 + 10 + 4 + 255 + 2,
+            |caps| {
+                let linktarget: LinkTargetId = {
+                    let m = caps.get(1).unwrap(); // Capture 1 always participates in the match
+                    let str = str::from_utf8(m.as_bytes())?;
+                    str.parse::<LinkTargetId>()?
+                };
+
+                let target: PageId = {
+                    let m = caps.get(2).unwrap(); // Capture 2 always participates in the match
+                    let str = str::from_utf8(m.as_bytes())?;
+                    if let Some(id) = title_to_id.get(str) {
+                        *id
+                    } else {
+                        debug!("linktarget title '{}' not known", str);
+                        return Ok(());
+                    }
+                };
+
+                if let Some(prev) = result.lock().unwrap().insert(linktarget, target) {
+                    if target != prev {
+                        debug!(
+                            "different targets {} and {} found for linktarget {}",
+                            target, prev, linktarget
+                        );
+                    }
+                }
+
+                Ok(())
+            },
+            thread_count,
+        )?;
+        Ok(Arc::into_inner(result)
+            .ok_or(anyhow!("failed to unwrap result arc"))?
+            .into_inner()?)
+    }
+
+    pub fn parse_pagelinks_table_dump<F>(
+        &self,
+        linktarget_to_target: &HashMap<LinkTargetId, PageId>,
+        redirects: &HashMap<PageId, PageId>,
         thread_count: usize,
         output: F,
     ) -> Result<()>
@@ -120,8 +169,8 @@ impl Dump {
     {
         Self::parse_dump_file(
             self.pagelinks.as_path(),
-            &Regex::new(r"\(([0-9]{1,10}),0,'(.{1,255}?)',0,(?:[0-9]{1,20}|NULL)\)")?, // https://www.mediawiki.org/wiki/Manual:Pagelinks_table
-            1 + 10 + 4 + 255 + 4,
+            &Regex::new(r"\(([0-9]{1,10}),0,([0-9]{1,20})\)")?, // https://www.mediawiki.org/wiki/Manual:Pagelinks_table
+            1 + 10 + 3 + 20 + 1,
             |caps| {
                 let source: PageId = {
                     let m = caps.get(1).unwrap(); // Capture 1 always participates in the match
@@ -129,26 +178,28 @@ impl Dump {
                     str.parse::<PageId>()?
                 };
 
-                let target: PageId = {
+                let linktarget: LinkTargetId = {
                     let m = caps.get(2).unwrap(); // Capture 2 always participates in the match
                     let str = str::from_utf8(m.as_bytes())?;
-                    if let Some(id) = pages.get(str) {
-                        *id
-                    } else {
-                        debug!("link target title '{}' not known", str);
-                        return Ok(());
-                    }
+                    str.parse::<LinkTargetId>()?
                 };
 
-                let source_clean = *redirs.get(&source).unwrap_or(&source);
-                let target_clean = *redirs.get(&target).unwrap_or(&target);
+                let target = if let Some(target) = linktarget_to_target.get(&linktarget) {
+                    *target
+                } else {
+                    debug!("linktarget id {} not known", linktarget);
+                    return Ok(());
+                };
+
+                let source_clean = *redirects.get(&source).unwrap_or(&source);
+                let target_clean = *redirects.get(&target).unwrap_or(&target);
 
                 if source_clean == target_clean {
                     debug!("self-link found for page id {}", source_clean);
                     return Ok(());
                 }
 
-                output(source, target);
+                output(source_clean, target_clean);
                 Ok(())
             },
             thread_count,

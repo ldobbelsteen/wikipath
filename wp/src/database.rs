@@ -16,7 +16,7 @@ use std::{mem, vec};
 #[serde(rename_all = "camelCase")]
 pub struct Metadata {
     pub language_code: String,
-    pub dump_date: String,
+    pub date_code: String,
 }
 
 impl Metadata {
@@ -25,10 +25,10 @@ impl Metadata {
         let re = Regex::new(r"(.+)-(.+).redb(?:\.tmp)?")?;
         if let Some(caps) = re.captures(s) {
             if let Some(language_code) = caps.get(1) {
-                if let Some(dump_date) = caps.get(2) {
+                if let Some(date_code) = caps.get(2) {
                     return Ok(Metadata {
                         language_code: language_code.as_str().into(),
-                        dump_date: dump_date.as_str().into(),
+                        date_code: date_code.as_str().into(),
                     });
                 }
             }
@@ -38,17 +38,20 @@ impl Metadata {
 
     /// Create name containing all database metadata.
     pub fn to_name(&self) -> String {
-        format!("{}-{}.redb", self.language_code, self.dump_date)
+        format!("{}-{}.redb", self.language_code, self.date_code)
     }
 
     /// Create temp name containing all database metadata.
     pub fn to_tmp_name(&self) -> String {
-        format!("{}-{}.redb.tmp", self.language_code, self.dump_date)
+        format!("{}-{}.redb.tmp", self.language_code, self.date_code)
     }
 }
 
-/// Representation of a Wikimedia page id.
+/// Representation of a page id.
 pub type PageId = u32;
+
+/// Representation of a linktarget table id.
+pub type LinkTargetId = u64;
 
 const INCOMING: TableDefinition<PageId, Vec<PageId>> = TableDefinition::new("incoming");
 const OUTGOING: TableDefinition<PageId, Vec<PageId>> = TableDefinition::new("outgoing");

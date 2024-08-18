@@ -12,7 +12,7 @@ pub struct Paths<'a> {
     target_is_redirect: bool,
     links: HashMap<PageId, HashSet<PageId>>,
     language_code: &'a str,
-    dump_date: &'a str,
+    date_code: &'a str,
     length: u32,
     count: u32,
 }
@@ -151,7 +151,7 @@ impl Database {
             target_is_redirect,
             links,
             language_code: &self.metadata.language_code,
-            dump_date: &self.metadata.dump_date,
+            date_code: &self.metadata.date_code,
             length: if count != 0 {
                 forward_depth + backward_depth
             } else {

@@ -9,12 +9,12 @@ export type Page = {
 
 export type Database = {
   languageCode: string;
-  dumpDate: string;
+  dateCode: string;
 };
 
 export type Paths = {
   languageCode: string;
-  dumpDate: string;
+  dateCode: string;
 
   source: Page;
   sourceIsRedirect: boolean;
@@ -65,7 +65,7 @@ export abstract class Api {
     sourceId: number,
     targetId: number,
   ): Promise<Paths> => {
-    const url = `/api/shortest_paths?language-code=${database.languageCode}&dump-date=${database.dumpDate}&source=${sourceId}&target=${targetId}`;
+    const url = `/api/shortest_paths?language-code=${database.languageCode}&date-code=${database.dateCode}&source=${sourceId}&target=${targetId}`;
     const result = await this.get(url, Schema.Paths);
     const pathsOfIds = extractFullPaths(result.source, result.links, 8);
     const titles = await Api.titles(
@@ -152,7 +152,7 @@ export abstract class Schema {
 
   static Database = z.object({
     languageCode: z.string().min(1),
-    dumpDate: z.string().min(1),
+    dateCode: z.string().min(1),
   });
 
   static Paths = z.object({
@@ -168,7 +168,7 @@ export abstract class Schema {
       z.array(this.Id),
     ),
     languageCode: z.string().min(1),
-    dumpDate: z.string().min(1),
+    dateCode: z.string().min(1),
     length: z.number().int().nonnegative(),
     count: z.number().int().nonnegative(),
   });

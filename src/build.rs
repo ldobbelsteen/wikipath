@@ -7,7 +7,7 @@ use std::{
     thread,
     time::Instant,
 };
-use wp::{cleanup_redirects, BufferedLinkInserter, Database, Dump, Metadata};
+use wp::{cleanup_redirects, BufferedLinkInserter, Database, Metadata, TableDumpFiles};
 
 /// Build a database in a certain language. Outputs the database into the specified directory. Dump
 /// files are downloaded into the specified directory to prevent re-downloading when re-building a
@@ -25,10 +25,10 @@ pub async fn build(
     info!("building '{language_code}' database...");
 
     info!("getting dump information...");
-    let external_dump = Dump::get_external(language_code, date_code).await?;
+    let external = TableDumpFiles::get_external(language_code, date_code).await?;
     let metadata = Metadata {
-        language_code: external_dump.get_language_code(),
-        dump_date: external_dump.get_dump_date(),
+        language_code: external.get_language_code(),
+        date_code: external.get_date_code(),
     };
 
     let tmp_path = databases_dir.join(metadata.to_tmp_name());
@@ -43,67 +43,80 @@ pub async fn build(
         return Ok(final_path);
     }
 
-    let mut database = Database::open(&tmp_path)?;
-    let txn = database.begin_write()?;
-    let mut build = txn.begin_build()?;
+    {
+        let mut db = Database::open(&tmp_path)?;
+        let txn = db.begin_write()?;
 
-    let dump = Dump::download_external(dumps_dir, external_dump).await?;
+        {
+            let mut build = txn.begin_build()?;
+            let files = TableDumpFiles::download_external(dumps_dir, external).await?;
 
-    info!("parsing page dump...");
-    let pages = dump.parse_page_dump(thread_count)?;
-    if pages.is_empty() {
-        return Err(anyhow!(
-            "no pages found in dump, possibly caused by schema changes"
-        ));
-    }
-    info!("{} unique pages found!", pages.len());
+            info!("parsing page table dump...");
+            let title_to_id = files.parse_page_table_dump(thread_count)?;
+            if title_to_id.is_empty() {
+                return Err(anyhow!(
+                    "nothing parsed from page table, possibly caused by schema changes"
+                ));
+            }
+            info!("{} page titles found!", title_to_id.len());
 
-    info!("parsing redirects dump...");
-    let mut redirs = dump.parse_redir_dump(&pages, thread_count)?;
-    if redirs.is_empty() {
-        return Err(anyhow!(
-            "no redirects found in dump, possibly caused by schema changes"
-        ));
-    }
-    info!("{} unfiltered redirects found!", redirs.len());
+            info!("parsing redirect table dump...");
+            let mut redirects = files.parse_redirect_table_dump(&title_to_id, thread_count)?;
+            if redirects.is_empty() {
+                return Err(anyhow!(
+                    "nothing parsed from redirect table, possibly caused by schema changes"
+                ));
+            }
+            info!("{} unfiltered redirects found!", redirects.len());
 
-    info!("cleaning up redirects...");
-    cleanup_redirects(&mut redirs);
-    info!("{} clean redirects found!", redirs.len());
+            info!("cleaning up redirects...");
+            cleanup_redirects(&mut redirects);
+            info!("{} clean redirects found!", redirects.len());
 
-    info!("inserting redirects into database...");
-    build.insert_redirects(&redirs)?;
+            info!("inserting redirects into database...");
+            build.insert_redirects(&redirects)?;
 
-    info!("parsing links dump & inserting into database...");
-    thread::scope(|scope| -> Result<()> {
-        let buffer = BufferedLinkInserter::for_txn(&mut build, memory_limit, scope)?;
-        dump.parse_link_dump(
-            &pages,
-            &redirs,
-            max(thread_count - 1, 1),
-            |source, target| {
-                buffer.insert(source, target);
-            },
-        )?;
-        info!("inserting remaining buffered links into database...");
-        let link_count = buffer.flush()?;
-        if link_count == 0 {
-            return Err(anyhow!(
-                "no links found in dump, possibly caused by schema changes"
-            ));
+            info!("parsing linktarget table dump...");
+            let linktarget_to_target =
+                files.parse_linktarget_table_dump(&title_to_id, thread_count)?;
+            if linktarget_to_target.is_empty() {
+                return Err(anyhow!(
+                    "nothing parsed from linktarget table, possibly caused by schema changes"
+                ));
+            }
+            info!("{} linktargets found!", linktarget_to_target.len());
+            drop(title_to_id);
+
+            info!("parsing pagelinks table dump & inserting links into database...");
+            thread::scope(|scope| -> Result<()> {
+                let buffer = BufferedLinkInserter::for_txn(&mut build, memory_limit, scope)?;
+                files.parse_pagelinks_table_dump(
+                    &linktarget_to_target,
+                    &redirects,
+                    max(thread_count - 1, 1),
+                    |source, target| {
+                        buffer.insert(source, target);
+                    },
+                )?;
+                info!("inserting remaining buffered links into database...");
+                let link_count = buffer.flush()?;
+                if link_count == 0 {
+                    return Err(anyhow!(
+                        "nothing parsed from pagelinks table, possibly caused by schema changes"
+                    ));
+                }
+                info!("{link_count} links inserted!");
+                Ok(())
+            })?;
         }
-        info!("{link_count} links found!");
-        Ok(())
-    })?;
 
-    info!("comitting transaction...");
-    drop(build);
-    txn.commit()?;
+        info!("comitting transaction...");
+        txn.commit()?;
 
-    info!("compacting database...");
-    database.compact()?;
+        info!("compacting database...");
+        db.compact()?;
+    }
 
-    drop(database);
     std::fs::rename(tmp_path, &final_path)?;
     info!(
         "database '{}' succesfully built in {}!",

@@ -1,7 +1,5 @@
 use anyhow::{anyhow, bail, Result};
 use data_encoding::HEXLOWER;
-use futures::try_join;
-use futures_util::StreamExt;
 use log::info;
 use regex::Regex;
 use ring::digest;
@@ -12,40 +10,45 @@ use std::{
 };
 
 #[derive(Debug)]
-pub struct Dump {
-    pub pages: PathBuf,
-    pub redirects: PathBuf,
+pub struct TableDumpFiles {
+    pub page: PathBuf,
+    pub redirect: PathBuf,
     pub pagelinks: PathBuf,
+    pub linktarget: PathBuf,
 }
 
 #[derive(Debug)]
-pub struct ExternalDumpFiles {
-    pages: ExternalFile,
-    redirects: ExternalFile,
+pub struct ExternalTableDumpFiles {
+    page: ExternalFile,
+    redirect: ExternalFile,
     pagelinks: ExternalFile,
+    linktarget: ExternalFile,
 }
 
 #[derive(Debug)]
 struct ExternalFile {
     full_name: String,
     language_code: String,
-    dump_date: String,
+    date_code: String,
     hash: String,
 }
 
-impl ExternalDumpFiles {
+impl ExternalTableDumpFiles {
     pub fn get_language_code(&self) -> String {
-        self.pages.language_code.clone()
+        self.page.language_code.clone()
     }
 
-    pub fn get_dump_date(&self) -> String {
-        self.pages.dump_date.clone()
+    pub fn get_date_code(&self) -> String {
+        self.page.date_code.clone()
     }
 }
 
-impl Dump {
+impl TableDumpFiles {
     /// Get information from Wikimedia on the given dump.
-    pub async fn get_external(language_code: &str, date_code: &str) -> Result<ExternalDumpFiles> {
+    pub async fn get_external(
+        language_code: &str,
+        date_code: &str,
+    ) -> Result<ExternalTableDumpFiles> {
         fn find_hash(hashes: &str, re: &Regex) -> Option<ExternalFile> {
             hashes
                 .lines()
@@ -55,7 +58,7 @@ impl Dump {
                     Some(ExternalFile {
                         full_name: caps.get(2)?.as_str().to_string(),
                         language_code: caps.get(3)?.as_str().to_string(),
-                        dump_date: caps.get(4)?.as_str().to_string(),
+                        date_code: caps.get(4)?.as_str().to_string(),
                         hash: caps.get(1)?.as_str().to_string(),
                     })
                 })
@@ -72,42 +75,55 @@ impl Dump {
             &Regex::new(r"([0-9a-f]{40})  ((.+)wiki-([0-9]{8})-page.sql.gz)")?,
         )
         .ok_or(anyhow!("missing page dump in sums file"))?;
-        let redir = find_hash(
+
+        let redirect = find_hash(
             &hashes,
             &Regex::new(r"([0-9a-f]{40})  ((.+)wiki-([0-9]{8})-redirect.sql.gz)")?,
         )
         .ok_or(anyhow!("missing redirect dump in sums file"))?;
-        let link = find_hash(
+
+        let pagelinks = find_hash(
             &hashes,
             &Regex::new(r"([0-9a-f]{40})  ((.+)wiki-([0-9]{8})-pagelinks.sql.gz)")?,
         )
         .ok_or(anyhow!("missing pagelinks dump in sums file"))?;
 
-        Ok(ExternalDumpFiles {
-            pages: page,
-            redirects: redir,
-            pagelinks: link,
+        let linktarget = find_hash(
+            &hashes,
+            &Regex::new(r"([0-9a-f]{40})  ((.+)wiki-([0-9]{8})-linktarget.sql.gz)")?,
+        )
+        .ok_or(anyhow!("missing linktarget dump in sums file"))?;
+
+        Ok(ExternalTableDumpFiles {
+            page,
+            redirect,
+            pagelinks,
+            linktarget,
         })
     }
 
     /// Download all relevant dump files from Wikimedia into a directory.
-    pub async fn download_external(dumps_dir: &Path, files: ExternalDumpFiles) -> Result<Self> {
+    pub async fn download_external(
+        dumps_dir: &Path,
+        files: ExternalTableDumpFiles,
+    ) -> Result<Self> {
         info!("downloading dump files...");
-        let (pages, redirects, pagelinks) = try_join!(
-            Self::download_external_file(dumps_dir, &files.pages),
-            Self::download_external_file(dumps_dir, &files.redirects),
-            Self::download_external_file(dumps_dir, &files.pagelinks)
-        )?;
+        let page = Self::download_external_file(dumps_dir, &files.page).await?;
+        let redirect = Self::download_external_file(dumps_dir, &files.redirect).await?;
+        let pagelinks = Self::download_external_file(dumps_dir, &files.pagelinks).await?;
+        let linktarget = Self::download_external_file(dumps_dir, &files.linktarget).await?;
 
         info!("checking dump file hashes...");
-        Self::check_file_hash(&pages, &files.pages.hash)?;
-        Self::check_file_hash(&redirects, &files.redirects.hash)?;
+        Self::check_file_hash(&page, &files.page.hash)?;
+        Self::check_file_hash(&redirect, &files.redirect.hash)?;
         Self::check_file_hash(&pagelinks, &files.pagelinks.hash)?;
+        Self::check_file_hash(&linktarget, &files.linktarget.hash)?;
 
         Ok(Self {
-            pages,
-            redirects,
+            page,
+            redirect,
             pagelinks,
+            linktarget,
         })
     }
 
@@ -128,7 +144,7 @@ impl Dump {
         let client = reqwest::Client::new();
         let url = format!(
             "https://dumps.wikimedia.org/{}wiki/{}/{}",
-            external_file.language_code, external_file.dump_date, external_file.full_name,
+            external_file.language_code, external_file.date_code, external_file.full_name,
         );
 
         let head_resp = client.head(&url).send().await?;
@@ -140,17 +156,24 @@ impl Dump {
             .ok_or(anyhow!("missing Content-Length header at '{}'", url))?;
 
         if existing_bytes < total_bytes {
-            let resp = client
+            let mut resp = client
                 .get(&url)
                 .header(reqwest::header::RANGE, format!("bytes={existing_bytes}-"))
                 .send()
                 .await?;
 
-            let mut stream = resp.bytes_stream();
-            while let Some(chunk) = stream.next().await {
-                let chunk = chunk?;
+            if !resp.status().is_success() {
+                return Err(anyhow!(
+                    "failed to download '{}' with status '{}'",
+                    url,
+                    resp.status()
+                ));
+            }
+
+            while let Some(chunk) = resp.chunk().await? {
                 file.write_all(&chunk)?;
             }
+
             file.flush()?;
         }
 

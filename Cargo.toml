@@ -6,16 +6,16 @@ edition = "2021"
 [workspace]
 
 [dependencies]
-anyhow = "1.0.82"
+anyhow = "1.0.86"
 axum = "0.7.5"
-clap = { version = "4.5.4", features = ["derive"] }
-env_logger = "0.11.3"
+clap = { version = "4.5.16", features = ["derive"] }
+env_logger = "0.11.5"
 humantime = "2.1.0"
-log = "0.4.21"
-mime_guess = "2.0.4"
+log = "0.4.22"
+mime_guess = "2.0.5"
 num_cpus = "1.16.0"
-rust-embed = "8.3.0"
-serde = { version = "1.0.198", features = ["derive"] }
-tokio = { version = "1.37.0", features = ["full"] }
+rust-embed = "8.5.0"
+serde = { version = "1.0.208", features = ["derive"] }
+tokio = { version = "1.39.2", features = ["full"] }
 tower-http = { version = "0.5.2", features = ["fs", "timeout", "set-header"] }
 wp = { path = "wp" }

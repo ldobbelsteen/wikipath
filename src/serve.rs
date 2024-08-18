@@ -39,7 +39,7 @@ async fn list_databases_handler(Extension(databases): Extension<Databases>) -> R
 #[serde(rename_all = "kebab-case")]
 struct ShortestPathsQuery {
     language_code: String,
-    dump_date: String,
+    date_code: String,
     source: PageId,
     target: PageId,
 }
@@ -51,7 +51,7 @@ async fn shortest_paths_handler(
     let query = query.0;
     let metadata = Metadata {
         language_code: query.language_code,
-        dump_date: query.dump_date,
+        date_code: query.date_code,
     };
     if let Some(database) = databases.get(&metadata) {
         match database.get_shortest_paths(query.source, query.target) {
