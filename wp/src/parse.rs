@@ -29,9 +29,9 @@ impl TableDumpFiles {
         Self::parse_dump_file(
             self.page.as_path(),
             &Regex::new(
-                r"\(([0-9]{1,10}),0,'(.{1,255}?)',[01],[01],0.[0-9]{1,32}?,'[0-9]{14}',(?:'[0-9]{14}'|NULL),[0-9]{1,10},[0-9]{1,10},'wikitext',NULL\)",
+                r"\(([0-9]{1,10}),0,'(.{0,255}?)',[01],[01],0.[0-9]{1,32}?,'[0-9]{14}',(?:'[0-9]{14}'|NULL),[0-9]{1,10},[0-9]{1,10},(?:'.{0,32}'|NULL),(?:'.{0,35}'|NULL)\)",
             )?, // https://www.mediawiki.org/wiki/Manual:Page_table
-            1 + 10 + 4 + 255 + 8 + 32 + 2 + 14 + 3 + 14 + 2 + 10 + 1 + 10 + 17,
+            1 + 10 + 4 + 255 + 8 + 32 + 2 + 14 + 3 + 14 + 2 + 10 + 1 + 10 + 2 + 32 + 3 + 35 + 2,
             |caps| {
                 let id: PageId = {
                     let m = caps.get(1).unwrap(); // Capture 1 always participates in the match
@@ -67,7 +67,9 @@ impl TableDumpFiles {
         let result = Arc::new(Mutex::new(HashMap::new()));
         Self::parse_dump_file(
             self.redirect.as_path(),
-            &Regex::new(r"\(([0-9]{1,10}),0,'(.{1,255}?)','.{0,32}?','.{0,255}?'\)")?, // https://www.mediawiki.org/wiki/Manual:Redirect_table
+            &Regex::new(
+                r"\(([0-9]{1,10}),0,'(.{0,255}?)',(?:'.{0,32}'|NULL),(?:'.{0,255}'|NULL)\)",
+            )?, // https://www.mediawiki.org/wiki/Manual:Redirect_table
             1 + 10 + 4 + 255 + 3 + 32 + 3 + 255 + 2,
             |caps| {
                 let source: PageId = {
@@ -119,8 +121,8 @@ impl TableDumpFiles {
         let result = Arc::new(Mutex::new(HashMap::new()));
         Self::parse_dump_file(
             self.linktarget.as_path(),
-            &Regex::new(r"\(([0-9]{1,20}),0,'(.{1,255}?)'\)")?, // https://www.mediawiki.org/wiki/Manual:Linktarget_table
-            1 + 10 + 4 + 255 + 2,
+            &Regex::new(r"\(([0-9]{1,20}),0,'(.{0,255}?)'\)")?, // https://www.mediawiki.org/wiki/Manual:Linktarget_table
+            1 + 20 + 4 + 255 + 2,
             |caps| {
                 let linktarget: LinkTargetId = {
                     let m = caps.get(1).unwrap(); // Capture 1 always participates in the match

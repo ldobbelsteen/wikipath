@@ -71,7 +71,7 @@ pub async fn build(
 
             info!("cleaning up redirects...");
             cleanup_redirects(&mut redirects);
-            info!("{} clean redirects found!", redirects.len());
+            info!("{} redirects found!", redirects.len());
 
             info!("inserting redirects into database...");
             build.insert_redirects(&redirects)?;
