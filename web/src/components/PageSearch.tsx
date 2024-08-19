@@ -1,12 +1,13 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "react-hot-toast";
-import { Api, Database, Page } from "../api";
+import { fetchRandomPage, fetchSuggestions } from "../api";
 import { weakStringEquals } from "../misc";
 import Dice from "../static/dice.svg";
 import LoadingBlack from "../static/loading-black.svg";
 import { Button } from "./generic/Button";
 import { InputImage } from "./generic/InputImage";
 import { InputText } from "./generic/InputText";
+import { Database, Page } from "../schema";
 
 const SEARCH_DEBOUNCE_MS = 400;
 
@@ -41,7 +42,7 @@ export const PageSearch = (props: {
   const [inFocus, setInFocus] = useState(false);
   const randomAbort = useRef(new AbortController());
   const matchingAbort = useRef(new AbortController());
-  const matchingDebounce = useRef<number>();
+  const matchingDebounce = useRef<ReturnType<typeof setTimeout>>();
 
   const { setState } = props;
 
@@ -51,15 +52,15 @@ export const PageSearch = (props: {
     randomAbort.current.abort();
     const thisAbort = new AbortController();
     randomAbort.current = thisAbort;
-    Api.randomPage(props.database.languageCode)
-      .then((random) =>
+    fetchRandomPage(props.database.languageCode)
+      .then((random) => {
         setState({
           search: random.title,
           showUnknown: false,
           matching: "loading",
-        }),
-      )
-      .catch((err) => {
+        });
+      })
+      .catch((err: unknown) => {
         if (!thisAbort.signal.aborted) {
           setState({
             search: "",
@@ -96,13 +97,13 @@ export const PageSearch = (props: {
       }
 
       matchingDebounce.current = setTimeout(() => {
-        Api.suggestions(
+        fetchSuggestions(
           props.database.languageCode,
           search,
           5,
           thisAbort.signal,
         )
-          .then((suggestions) =>
+          .then((suggestions) => {
             setState({
               search,
               showUnknown: false,
@@ -112,9 +113,9 @@ export const PageSearch = (props: {
                   weakStringEquals(page.title, search),
                 ),
               },
-            }),
-          )
-          .catch((err) => {
+            });
+          })
+          .catch((err: unknown) => {
             if (!thisAbort.signal.aborted) {
               setState({
                 search: "",
@@ -154,15 +155,19 @@ export const PageSearch = (props: {
     <div className="relative">
       <InputText
         value={props.state !== "loadingRandom" ? props.state.search : ""}
-        onChange={(ev) =>
+        onChange={(ev) => {
           props.setState({
             search: ev.target.value,
             matching: "loading",
             showUnknown: false,
-          })
-        }
-        onFocus={() => setInFocus(true)}
-        onBlur={() => setInFocus(false)}
+          });
+        }}
+        onFocus={() => {
+          setInFocus(true);
+        }}
+        onBlur={() => {
+          setInFocus(false);
+        }}
         placeholder={
           props.state === "loadingRandom"
             ? "Loading random..."
@@ -177,10 +182,10 @@ export const PageSearch = (props: {
         }
       />
       {inFocus && props.state !== "loadingRandom" && (
-        <div className="z-50 absolute left-2 right-2 shadow-2xl">
-          <div className="flex flex-col bg-white rounded">
+        <div className="absolute inset-x-2 z-50 shadow-2xl">
+          <div className="flex flex-col rounded bg-white">
             {props.state.matching === "loading" ? (
-              <span className="text-gray-600 m-1">Loading suggestions...</span>
+              <span className="m-1 text-gray-600">Loading suggestions...</span>
             ) : props.state.matching.suggestions.length > 0 ? (
               props.state.matching.suggestions.map((suggested, i) => (
                 <Button
@@ -199,7 +204,7 @@ export const PageSearch = (props: {
               ))
             ) : (
               props.state.search !== "" && (
-                <span className="text-gray-600 m-1">No results found</span>
+                <span className="m-1 text-gray-600">No results found</span>
               )
             )}
           </div>
@@ -209,7 +214,7 @@ export const PageSearch = (props: {
         alt="Randomize page"
         src={props.state === "loadingRandom" ? LoadingBlack : Dice}
         disabled={props.disabled || props.state === "loadingRandom"}
-        className="w-6 h-6 absolute right-4 top-0 bottom-0 my-auto opacity-30 hover:opacity-80"
+        className="absolute inset-y-0 right-4 my-auto size-6 opacity-30 hover:opacity-80"
         onClick={fetchRandom}
       />
     </div>

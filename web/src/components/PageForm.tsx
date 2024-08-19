@@ -1,12 +1,12 @@
 import React, { useCallback, useEffect, useState } from "react";
 import toast from "react-hot-toast";
-import { Database, Page } from "../api";
 import LoadingBlack from "../static/loading-black.svg";
 import LoadingWhite from "../static/loading-white.svg";
 import Swap from "../static/swap.svg";
 import { SearchState, PageSearch, defaultSearchState } from "./PageSearch";
 import { Button } from "./generic/Button";
 import { InputImage } from "./generic/InputImage";
+import { Database, Page } from "../schema";
 
 export const PageForm = (props: {
   database: Database;
@@ -111,7 +111,7 @@ export const PageForm = (props: {
         placeholder="End page"
       />
       <Button disabled={props.pathsLoading || pendingFind} onClick={find}>
-        <div className="w-6 h-6">
+        <div className="size-6">
           {pendingFind || props.pathsLoading ? (
             <img src={LoadingBlack} alt="Loading..." />
           ) : (

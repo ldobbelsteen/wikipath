@@ -1,6 +1,6 @@
 /** Flatten a two-dimensional array, removing any duplicates */
 export const flattenUnique = <T>(arr: T[][]): T[] => {
-  const set: Set<T> = new Set();
+  const set = new Set<T>();
   arr.forEach((subArr) => {
     subArr.forEach((element) => {
       set.add(element);

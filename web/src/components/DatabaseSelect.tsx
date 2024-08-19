@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { toast } from "react-hot-toast";
-import { Database, Api } from "../api";
 import { Select } from "./generic/Select";
+import { Database } from "../schema";
+import { listDatabases } from "../api";
 
 /** Select the best language based on the user's browser languages. */
 export const defaultDatabase = (databases: Database[]) => {
@@ -33,13 +34,13 @@ export const DatabaseSelect = (props: {
    * Fetch available databases and select default.
    */
   useEffect(() => {
-    Api.listDatabases()
+    listDatabases()
       .then((databases) => {
         setDatabases(databases);
         setSelected(defaultDatabase(databases));
         return null;
       })
-      .catch((err) => {
+      .catch((err: unknown) => {
         toast.error(
           "An unexpected error occurred while getting the available languages",
         );
@@ -54,13 +55,13 @@ export const DatabaseSelect = (props: {
         label="Select Wikipedia language"
         disabled={props.disabled}
         value={props.selected.languageCode}
-        onChange={(ev) =>
+        onChange={(ev) => {
           setSelected(
             databases.find(
               (database) => database.languageCode === ev.target.value,
             ),
-          )
-        }
+          );
+        }}
         options={databases.map((database) => ({
           value: database.languageCode,
           children: <>{database.languageCode}</>,

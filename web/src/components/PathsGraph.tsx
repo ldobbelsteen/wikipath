@@ -13,7 +13,7 @@ import {
 } from "d3";
 import { SimulationLinkDatum, SimulationNodeDatum } from "d3-force";
 import React, { useEffect, useRef } from "react";
-import { Paths } from "../api";
+import { Paths } from "../schema";
 
 type Link = SimulationLinkDatum<Node>;
 interface Node extends SimulationNodeDatum {
@@ -67,8 +67,8 @@ export const PathsGraph = (props: {
     });
 
     /** Force simulation; gravitate to center and gravitate away from eachother */
-    const centerX = 0.5 * (ref?.current?.clientWidth || 0);
-    const centerY = 0.5 * (ref?.current?.clientHeight || 0);
+    const centerX = 0.5 * (ref.current.clientWidth || 0);
+    const centerY = 0.5 * (ref.current.clientHeight || 0);
     const simulation = forceSimulation(nodes)
       .force("link", forceLink(links))
       .force("charge", forceManyBody().strength(-2000).distanceMax(300))
@@ -202,11 +202,14 @@ export const PathsGraph = (props: {
     /** Start physics simulation */
     simulation.on("tick", () => {
       link
-        .attr("x1", (node: Link) => (node.source as Node).x?.toString() || "")
-        .attr("y1", (node: Link) => (node.source as Node).y?.toString() || "")
-        .attr("x2", (node: Link) => (node.target as Node).x?.toString() || "")
-        .attr("y2", (node: Link) => (node.target as Node).y?.toString() || "");
-      node.attr("transform", (d) => `translate(${d.x || 0},${d.y || 0})`);
+        .attr("x1", (node: Link) => (node.source as Node).x?.toString() ?? "")
+        .attr("y1", (node: Link) => (node.source as Node).y?.toString() ?? "")
+        .attr("x2", (node: Link) => (node.target as Node).x?.toString() ?? "")
+        .attr("y2", (node: Link) => (node.target as Node).y?.toString() ?? "");
+      node.attr(
+        "transform",
+        (d) => `translate(${(d.x ?? 0).toString()},${(d.y ?? 0).toString()})`,
+      );
     });
   }, [paths]);
 

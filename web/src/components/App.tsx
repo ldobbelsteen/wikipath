@@ -1,11 +1,12 @@
 import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Toaster, toast } from "react-hot-toast";
-import { Paths, Api, Database, Page } from "../api";
 import { DatabaseSelect } from "./DatabaseSelect";
 import { PageForm } from "./PageForm";
 import { PathsGraph } from "./PathsGraph";
 import { Link } from "./generic/Link";
+import { Database, Page, Paths } from "../schema";
+import { fetchShortestPaths } from "../api";
 
 const App = () => {
   const [database, setDatabase] = useState<Database>();
@@ -13,9 +14,9 @@ const App = () => {
 
   const getPaths = (database: Database, source: Page, target: Page) => {
     setPaths("loading");
-    Api.shortestPaths(database, source.id, target.id)
+    fetchShortestPaths(database, source.id, target.id)
       .then(setPaths)
-      .catch((err) => {
+      .catch((err: unknown) => {
         setPaths(undefined);
         toast.error("An unexpected error occurred while getting your paths");
         console.error(err);
@@ -36,7 +37,7 @@ const App = () => {
           ).
         </span>
       </header>
-      <section className="flex flex-wrap justify-center items-center">
+      <section className="flex flex-wrap items-center justify-center">
         <DatabaseSelect
           selected={database}
           setSelected={setDatabase}
@@ -55,11 +56,11 @@ const App = () => {
           ? "\u00A0"
           : paths.count === 0
             ? "No paths found"
-            : `Found ${paths.count} ${
+            : `Found ${paths.count.toString()} ${
                 paths.count === 1 ? "path" : "paths"
-              } of degree ${paths.length}.${
+              } of degree ${paths.length.toString()}.${
                 paths.count > paths.paths.length
-                  ? ` A random sample of ${paths.paths.length} paths is shown below.`
+                  ? ` A random sample of ${paths.paths.length.toString()} paths is shown below.`
                   : ""
               }`}
       </span>
