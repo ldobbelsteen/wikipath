@@ -12,8 +12,14 @@ use axum::{
 use log::{error, info, warn};
 use rust_embed::RustEmbed;
 use serde::Deserialize;
-use std::{collections::HashMap, fs, path::Path, sync::Arc, time::Duration};
-use tokio::net::TcpListener;
+use std::{
+    collections::HashMap,
+    fs::{self},
+    path::Path,
+    sync::{Arc, RwLock},
+    time::Duration,
+};
+use tokio::{net::TcpListener, task::JoinHandle};
 use tower_http::{set_header::SetResponseHeaderLayer, timeout::TimeoutLayer};
 use wp::{Database, Metadata, PageId};
 
@@ -21,17 +27,15 @@ use wp::{Database, Metadata, PageId};
 #[folder = "web/dist/"]
 struct FrontendAssets;
 
-type Databases = Arc<HashMap<Metadata, Database>>;
+type Databases = Arc<RwLock<HashMap<Metadata, Database>>>;
 
 fn not_found() -> Response {
     (StatusCode::NOT_FOUND, "404").into_response()
 }
 
 async fn list_databases_handler(Extension(databases): Extension<Databases>) -> Response {
-    let list = databases
-        .values()
-        .map(|db| &db.metadata)
-        .collect::<Vec<_>>();
+    let guard = databases.read().unwrap();
+    let list = guard.values().map(|db| &db.metadata).collect::<Vec<_>>();
     Json(list).into_response()
 }
 
@@ -53,7 +57,8 @@ async fn shortest_paths_handler(
         language_code: query.language_code,
         date_code: query.date_code,
     };
-    if let Some(database) = databases.get(&metadata) {
+    let guard = databases.read().unwrap();
+    if let Some(database) = guard.get(&metadata) {
         match database.get_shortest_paths(query.source, query.target) {
             Ok(paths) => Json(paths).into_response(),
             Err(e) => {
@@ -90,16 +95,22 @@ async fn frontend_asset_handler(uri: Uri) -> Response {
 }
 
 pub async fn serve(databases_dir: &Path, listening_port: u16) -> Result<()> {
-    let databases: Databases = {
-        let mut result = HashMap::new();
-        for entry in fs::read_dir(databases_dir)? {
+    let databases: Databases = Arc::new(RwLock::new(HashMap::new()));
+
+    let databases_clone = databases.clone();
+    let databases_dir_clone = databases_dir.to_path_buf();
+    let loader_handle: JoinHandle<Result<()>> = tokio::spawn(async move {
+        for entry in fs::read_dir(databases_dir_clone)? {
             let path = entry?.path();
             if let Some(ext) = path.extension() {
                 if ext == "redb" {
-                    info!("opening database '{}'...", path.display());
                     match Database::open(&path) {
                         Ok(database) => {
-                            result.insert(database.metadata.clone(), database);
+                            databases_clone
+                                .write()
+                                .unwrap()
+                                .insert(database.metadata.clone(), database);
+                            info!("finished opening database '{}'...", path.display());
                         }
                         Err(err) => {
                             warn!("skipping database '{}': {}", path.display(), err);
@@ -108,8 +119,8 @@ pub async fn serve(databases_dir: &Path, listening_port: u16) -> Result<()> {
                 }
             }
         }
-        Arc::new(result)
-    };
+        Ok(())
+    });
 
     let router = Router::new()
         .route(
@@ -138,8 +149,16 @@ pub async fn serve(databases_dir: &Path, listening_port: u16) -> Result<()> {
         .layer(TimeoutLayer::new(Duration::from_secs(10)));
 
     let listener = TcpListener::bind(format!(":::{listening_port}")).await?;
-    info!("listening on http://localhost:{listening_port}...");
-    axum::serve(listener, router).await?;
+    let listener_handle: JoinHandle<Result<()>> = tokio::spawn(async move {
+        axum::serve(listener, router).await?;
+        Ok(())
+    });
 
-    Ok(())
+    info!("listening on http://localhost:{listening_port}...");
+
+    // Wait for the loader and listener and return the first error that may occur.
+    match tokio::try_join!(loader_handle, listener_handle)? {
+        (Err(err), _) | (_, Err(err)) => Err(err),
+        (Ok(()), Ok(())) => Ok(()),
+    }
 }
