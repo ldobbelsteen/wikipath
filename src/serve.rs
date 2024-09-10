@@ -9,7 +9,6 @@ use axum::{
     routing::get,
     Json, Router,
 };
-use log::{error, info, warn};
 use rust_embed::RustEmbed;
 use serde::Deserialize;
 use std::{
@@ -66,7 +65,7 @@ async fn shortest_paths_handler(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "unexpected database error",
                 );
-                error!("failed getting shortest paths: {e}...");
+                log::error!("failed getting shortest paths: {e}...");
                 response.into_response()
             }
         }
@@ -110,10 +109,10 @@ pub async fn serve(databases_dir: &Path, listening_port: u16) -> Result<()> {
                                 .write()
                                 .unwrap()
                                 .insert(database.metadata.clone(), database);
-                            info!("finished opening database '{}'...", path.display());
+                            log::info!("finished opening database '{}'...", path.display());
                         }
                         Err(err) => {
-                            warn!("skipping database '{}': {}", path.display(), err);
+                            log::warn!("skipping database '{}': {}", path.display(), err);
                         }
                     }
                 }
@@ -154,7 +153,7 @@ pub async fn serve(databases_dir: &Path, listening_port: u16) -> Result<()> {
         Ok(())
     });
 
-    info!("listening on http://localhost:{listening_port}...");
+    log::info!("listening on http://localhost:{listening_port}...");
 
     // Wait for the loader and listener and return the first error that may occur.
     match tokio::try_join!(loader_handle, listener_handle)? {

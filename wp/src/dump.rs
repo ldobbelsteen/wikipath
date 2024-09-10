@@ -1,6 +1,5 @@
 use anyhow::{anyhow, bail, Result};
 use data_encoding::HEXLOWER;
-use log::info;
 use regex::Regex;
 use ring::digest;
 use std::{
@@ -107,13 +106,13 @@ impl TableDumpFiles {
         dumps_dir: &Path,
         files: ExternalTableDumpFiles,
     ) -> Result<Self> {
-        info!("downloading dump files...");
+        log::info!("downloading dump files...");
         let page = Self::download_external_file(dumps_dir, &files.page).await?;
         let redirect = Self::download_external_file(dumps_dir, &files.redirect).await?;
         let pagelinks = Self::download_external_file(dumps_dir, &files.pagelinks).await?;
         let linktarget = Self::download_external_file(dumps_dir, &files.linktarget).await?;
 
-        info!("checking dump file hashes...");
+        log::info!("checking dump file hashes...");
         Self::check_file_hash(&page, &files.page.hash)?;
         Self::check_file_hash(&redirect, &files.redirect.hash)?;
         Self::check_file_hash(&pagelinks, &files.pagelinks.hash)?;

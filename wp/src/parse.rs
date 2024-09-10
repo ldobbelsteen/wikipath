@@ -5,7 +5,6 @@ use crate::{
 use anyhow::{anyhow, Result};
 use flate2::read::GzDecoder;
 use hashbrown::{HashMap, HashSet};
-use log::{debug, warn};
 use regex::bytes::Regex;
 use std::{
     cmp::max,
@@ -46,7 +45,7 @@ impl TableDumpFiles {
 
                 if let Some(prev) = result.lock().unwrap().insert(title, id) {
                     if id != prev {
-                        debug!("same title encountered for page {} and {}", id, prev);
+                        log::debug!("same title encountered for page {} and {}", id, prev);
                     }
                 }
 
@@ -84,22 +83,24 @@ impl TableDumpFiles {
                     if let Some(id) = title_to_id.get(str) {
                         *id
                     } else {
-                        debug!("redirect target title '{}' not known", str);
+                        log::debug!("redirect target title '{}' not known", str);
                         return Ok(());
                     }
                 };
 
                 if source == target {
-                    debug!("self-redirect found for page id {}", source);
+                    log::debug!("self-redirect found for page id {}", source);
                     return Ok(());
                 }
 
                 let mut redirs = result.lock().unwrap();
                 if let Some(prev) = redirs.insert(source, target) {
                     if prev != target {
-                        debug!(
+                        log::debug!(
                             "two redirects with same source page id {} encountered: {} and {}",
-                            source, target, prev
+                            source,
+                            target,
+                            prev
                         );
                     }
                 }
@@ -136,16 +137,18 @@ impl TableDumpFiles {
                     if let Some(id) = title_to_id.get(str) {
                         *id
                     } else {
-                        debug!("linktarget title '{}' not known", str);
+                        log::debug!("linktarget title '{}' not known", str);
                         return Ok(());
                     }
                 };
 
                 if let Some(prev) = result.lock().unwrap().insert(linktarget, target) {
                     if target != prev {
-                        debug!(
+                        log::debug!(
                             "different targets {} and {} found for linktarget {}",
-                            target, prev, linktarget
+                            target,
+                            prev,
+                            linktarget
                         );
                     }
                 }
@@ -189,7 +192,7 @@ impl TableDumpFiles {
                 let target = if let Some(target) = linktarget_to_target.get(&linktarget) {
                     *target
                 } else {
-                    debug!("linktarget id {} not known", linktarget);
+                    log::debug!("linktarget id {} not known", linktarget);
                     return Ok(());
                 };
 
@@ -197,7 +200,7 @@ impl TableDumpFiles {
                 let target_clean = *redirects.get(&target).unwrap_or(&target);
 
                 if source_clean == target_clean {
-                    debug!("self-link found for page id {}", source_clean);
+                    log::debug!("self-link found for page id {}", source_clean);
                     return Ok(());
                 }
 
@@ -238,7 +241,7 @@ impl TableDumpFiles {
                             // Find all captures in chunk and consume results.
                             for captures in regex.captures_iter(&chunk.data[..chunk.end]) {
                                 if let Err(e) = consume_capture(captures) {
-                                    warn!("error while consuming capture: {e}");
+                                    log::warn!("error while consuming capture: {e}");
                                 }
                             }
                             stale_tx.send(Some(chunk)).ok(); // Send back chunk.
