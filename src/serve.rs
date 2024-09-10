@@ -122,13 +122,7 @@ pub async fn serve(databases_dir: &Path, listening_port: u16) -> Result<()> {
     });
 
     let router = Router::new()
-        .route(
-            "/api/list_databases",
-            get(list_databases_handler).layer(SetResponseHeaderLayer::overriding(
-                CACHE_CONTROL,
-                HeaderValue::from_str("max-age=300")?, // cached for 5 minutes
-            )),
-        )
+        .route("/api/list_databases", get(list_databases_handler))
         .route(
             "/api/shortest_paths",
             get(shortest_paths_handler).layer(SetResponseHeaderLayer::overriding(
@@ -141,7 +135,7 @@ pub async fn serve(databases_dir: &Path, listening_port: u16) -> Result<()> {
             "/assets/*f",
             get(frontend_asset_handler).layer(SetResponseHeaderLayer::overriding(
                 CACHE_CONTROL,
-                HeaderValue::from_str("max-age=31536000")?, // cached for a year
+                HeaderValue::from_str("max-age=31536000")?, // cached for a year, since assets are hashed
             )),
         )
         .fallback(frontend_asset_handler)
