@@ -40,7 +40,7 @@ docker run -d \
     --restart always \
     --publish 1789:1789 \
     --volume /path/to/db/directory:/databases \
-    ghcr.io/ldobbelsteen/wikipath serve
+    ghcr.io/ldobbelsteen/wikipath
 ```
 
 An example of how the image can be used to build databases:
