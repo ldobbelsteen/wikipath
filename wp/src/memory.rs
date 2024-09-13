@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use sysinfo::{Pid, System};
+use sysinfo::{Pid, ProcessesToUpdate, System};
 
 /// Struct that allows checking the memory usage of the current process.
 #[derive(Debug)]
@@ -16,7 +16,8 @@ impl ProcessMemoryUsageChecker {
     }
 
     pub fn get(&mut self) -> u64 {
-        self.system.refresh_process(self.pid);
+        self.system
+            .refresh_processes(ProcessesToUpdate::Some(&[self.pid]));
         self.system.process(self.pid).unwrap().memory()
     }
 }
