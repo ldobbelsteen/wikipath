@@ -93,7 +93,7 @@ pub async fn build(
         log::info!("{} linktargets found!", linktarget_to_target.len());
         drop(title_to_id);
 
-        log::info!("parsing pagelinks table dump & inserting links into database...");
+        log::info!("parsing pagelinks table dump...");
         thread::scope(|thread_scope| -> Result<()> {
             let txn = BufferedLinkWriteTransaction::begin(db, process_memory_limit, thread_scope)?;
             files.parse_pagelinks_table_dump(
@@ -105,7 +105,7 @@ pub async fn build(
                 },
             )?;
 
-            log::info!("inserting remaining buffered links into database...");
+            log::info!("inserting buffered links into database...");
             let link_count = txn.flush_and_commit()?;
 
             if link_count == 0 {

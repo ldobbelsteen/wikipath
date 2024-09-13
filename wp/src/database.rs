@@ -319,20 +319,29 @@ impl<'scope> BufferedLinkWriteTransaction<'scope> {
                 // incur the cost of updating a value in the database as opposed to just inserting.
                 if memory_checker.get() > process_memory_limit {
                     log::info!("flushing buffered incoming links due to reaching memory limit...");
-                    let incoming_buffer_taken = buffer_clone.lock().unwrap().take_incoming();
-                    for (target, sources) in &incoming_buffer_taken {
-                        incoming_count += txn.insert_incoming(target, sources)?;
+                    let mut incoming_buffer_taken = buffer_clone.lock().unwrap().take_incoming();
+                    for (target, sources) in incoming_buffer_taken.drain() {
+                        incoming_count += txn.insert_incoming(&target, &sources)?;
                     }
+
+                    // Drop the incoming buffer and sleep a bit to give the system time to free memory.
+                    drop(incoming_buffer_taken);
+                    std::thread::sleep(Duration::from_secs(1));
 
                     // If we still exceed the limit, flush the buffered outgoing links second.
                     if memory_checker.get() > process_memory_limit {
                         log::info!(
                             "flushing buffered outgoing links due to reaching memory limit..."
                         );
-                        let outgoing_buffer_taken = buffer_clone.lock().unwrap().take_outgoing();
-                        for (source, targets) in &outgoing_buffer_taken {
-                            outgoing_count += txn.insert_outgoing(source, targets)?;
+                        let mut outgoing_buffer_taken =
+                            buffer_clone.lock().unwrap().take_outgoing();
+                        for (source, targets) in outgoing_buffer_taken.drain() {
+                            outgoing_count += txn.insert_outgoing(&source, &targets)?;
                         }
+
+                        // Drop the outgoing buffer and sleep a bit to give the system time to free memory.
+                        drop(outgoing_buffer_taken);
+                        std::thread::sleep(Duration::from_secs(1));
                     }
                 }
 
