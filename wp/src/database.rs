@@ -295,30 +295,19 @@ impl<'scope> BufferedLinkWriteTransaction<'scope> {
             let mut outgoing_count = 0;
 
             loop {
-                // Wait a bit for the buffer to grow or flush and terminate if we get a signal.
-                let flush = flush_rx.recv_timeout(Duration::from_secs(1)).is_ok();
-
-                if flush {
-                    // Flush the incoming buffer.
-                    let incoming_buffer_taken = buffer_clone.lock().unwrap().take_incoming();
-                    for (target, sources) in &incoming_buffer_taken {
-                        incoming_count += txn.insert_incoming(target, sources)?;
-                    }
-
-                    // Flush the outgoing buffer.
-                    let outgoing_buffer_taken = buffer_clone.lock().unwrap().take_outgoing();
-                    for (source, targets) in &outgoing_buffer_taken {
-                        outgoing_count += txn.insert_outgoing(source, targets)?;
-                    }
-
-                    break;
-                }
+                // Wait for a flush signal or timeout for a regular memory check.
+                let force_flush = flush_rx.recv_timeout(Duration::from_secs(1)).is_ok();
 
                 // If we exceed the limit, flush the buffered incoming links first, since the links
                 // often seem to be sorted by target title in the dumps and thus we are less likely to
                 // incur the cost of updating a value in the database as opposed to just inserting.
-                if memory_checker.get() > process_memory_limit {
-                    log::info!("flushing buffered incoming links due to reaching memory limit...");
+                if force_flush || memory_checker.get() > process_memory_limit {
+                    if !force_flush {
+                        log::info!(
+                            "flushing buffered incoming links due to reaching memory limit..."
+                        );
+                    }
+
                     let mut incoming_buffer_taken = buffer_clone.lock().unwrap().take_incoming();
                     for (target, sources) in incoming_buffer_taken.drain() {
                         incoming_count += txn.insert_incoming(&target, &sources)?;
@@ -329,10 +318,13 @@ impl<'scope> BufferedLinkWriteTransaction<'scope> {
                     std::thread::sleep(Duration::from_secs(1));
 
                     // If we still exceed the limit, flush the buffered outgoing links second.
-                    if memory_checker.get() > process_memory_limit {
-                        log::info!(
-                            "flushing buffered outgoing links due to reaching memory limit..."
-                        );
+                    if force_flush || memory_checker.get() > process_memory_limit {
+                        if !force_flush {
+                            log::info!(
+                                "flushing buffered outgoing links due to reaching memory limit..."
+                            );
+                        }
+
                         let mut outgoing_buffer_taken =
                             buffer_clone.lock().unwrap().take_outgoing();
                         for (source, targets) in outgoing_buffer_taken.drain() {
@@ -345,7 +337,8 @@ impl<'scope> BufferedLinkWriteTransaction<'scope> {
                     }
                 }
 
-                if flush {
+                // If we force flushed, we are done.
+                if force_flush {
                     break;
                 }
             }
