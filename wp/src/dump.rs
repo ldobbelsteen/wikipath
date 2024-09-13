@@ -8,6 +8,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// Struct to hold paths to the local dump files.
 #[derive(Debug)]
 pub struct TableDumpFiles {
     pub page: PathBuf,
@@ -16,14 +17,7 @@ pub struct TableDumpFiles {
     pub linktarget: PathBuf,
 }
 
-#[derive(Debug)]
-pub struct ExternalTableDumpFiles {
-    page: ExternalFile,
-    redirect: ExternalFile,
-    pagelinks: ExternalFile,
-    linktarget: ExternalFile,
-}
-
+/// Metadata of a single external dump file.
 #[derive(Debug)]
 struct ExternalFile {
     full_name: String,
@@ -32,18 +26,29 @@ struct ExternalFile {
     hash: String,
 }
 
+/// Struct to hold the metadatas of the external dump files.
+#[derive(Debug)]
+pub struct ExternalTableDumpFiles {
+    page: ExternalFile,
+    redirect: ExternalFile,
+    pagelinks: ExternalFile,
+    linktarget: ExternalFile,
+}
+
 impl ExternalTableDumpFiles {
+    /// Get the language code of the dump.
     pub fn get_language_code(&self) -> String {
         self.page.language_code.clone()
     }
 
+    /// Get the date code of the dump.
     pub fn get_date_code(&self) -> String {
         self.page.date_code.clone()
     }
 }
 
 impl TableDumpFiles {
-    /// Get information from Wikimedia on the given dump.
+    /// Get metadatas of the dump files from Wikimedia.
     pub async fn get_external(
         language_code: &str,
         date_code: &str,
@@ -113,10 +118,10 @@ impl TableDumpFiles {
         let linktarget = Self::download_external_file(dumps_dir, &files.linktarget).await?;
 
         log::info!("checking dump file hashes...");
-        Self::check_file_hash(&page, &files.page.hash)?;
-        Self::check_file_hash(&redirect, &files.redirect.hash)?;
-        Self::check_file_hash(&pagelinks, &files.pagelinks.hash)?;
-        Self::check_file_hash(&linktarget, &files.linktarget.hash)?;
+        check_file_hash(&page, &files.page.hash)?;
+        check_file_hash(&redirect, &files.redirect.hash)?;
+        check_file_hash(&pagelinks, &files.pagelinks.hash)?;
+        check_file_hash(&linktarget, &files.linktarget.hash)?;
 
         Ok(Self {
             page,
@@ -179,32 +184,32 @@ impl TableDumpFiles {
 
         Ok(target)
     }
+}
 
-    /// Check whether the hash of a file matches with a given hash.
-    fn check_file_hash(path: &Path, hash: &str) -> Result<()> {
-        let file = File::open(path)?;
-        let mut reader = BufReader::new(&file);
-        let mut context = digest::Context::new(&digest::SHA1_FOR_LEGACY_USE_ONLY);
-        let mut buffer = [0; 8192];
+/// Check whether the hash of a file matches with a given hash.
+fn check_file_hash(path: &Path, hash: &str) -> Result<()> {
+    let file = File::open(path)?;
+    let mut reader = BufReader::new(&file);
+    let mut context = digest::Context::new(&digest::SHA1_FOR_LEGACY_USE_ONLY);
+    let mut buffer = [0; 8192];
 
-        loop {
-            let count = reader.read(&mut buffer)?;
-            if count == 0 {
-                break;
-            }
-            context.update(&buffer[..count]);
+    loop {
+        let count = reader.read(&mut buffer)?;
+        if count == 0 {
+            break;
         }
-
-        let digest = HEXLOWER.encode(context.finish().as_ref());
-        if digest != hash {
-            bail!(
-                "file '{}' hash mismatch between digest {} and target {}",
-                path.display(),
-                digest,
-                hash
-            );
-        }
-
-        Ok(())
+        context.update(&buffer[..count]);
     }
+
+    let digest = HEXLOWER.encode(context.finish().as_ref());
+    if digest != hash {
+        bail!(
+            "file '{}' hash mismatch between digest {} and target {}",
+            path.display(),
+            digest,
+            hash
+        );
+    }
+
+    Ok(())
 }

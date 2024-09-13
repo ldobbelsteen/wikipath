@@ -12,6 +12,8 @@ use std::thread::{Scope, ScopedJoinHandle};
 use std::time::Duration;
 use std::{mem, vec};
 
+/// A struct containing metadata about a database. The language code represents
+/// the Wikipedia language, and the date code represents the dump date.
 #[derive(Debug, Serialize, Clone, PartialEq, Eq, Hash)]
 #[serde(rename_all = "camelCase")]
 pub struct Metadata {
@@ -20,7 +22,7 @@ pub struct Metadata {
 }
 
 impl Metadata {
-    /// Extract metadata from the name of a database. Returns whether the name is temporary.
+    /// Extract metadata from the name of a database. Also returns whether the name is temporary.
     fn from_name(s: &str) -> Result<(Self, bool)> {
         let re = Regex::new(r"wp-([a-zA-Z]+)-([0-9]+)(-tmp)?")?;
         if let Some(caps) = re.captures(s) {
@@ -51,6 +53,7 @@ impl Metadata {
     }
 }
 
+/// Instance of a database environment.
 #[derive(Debug)]
 pub struct Database {
     env: heed::Env,
@@ -59,8 +62,8 @@ pub struct Database {
 }
 
 impl Database {
-    /// Open a database environment by creating a directory at a path.
-    /// Returns an error if the database name in the path is not in the correct format.
+    /// Open a database environment in a directory. If the database directory does not yet exist,
+    /// it will be created. Returns an error if the database name in the path is not correctly formatted.
     pub fn open(path: &Path) -> Result<Self> {
         let filename = path
             .file_name()
@@ -72,7 +75,7 @@ impl Database {
         let env = unsafe {
             EnvOpenOptions::new()
                 .max_dbs(3) // incoming, outgoing, redirects
-                .map_size(64 * 1024 * 1024 * 1024) // max database size
+                .map_size(64 * 1024 * 1024 * 1024) // 64GB as max database size
                 .open(path)?
         };
 
@@ -84,16 +87,25 @@ impl Database {
     }
 }
 
-/// Representation of a page id.
+/// Representation of a page id. The database schema uses 10-digit unsigned integers (<https://www.mediawiki.org/wiki/Manual:Pagelinks_table>).
+/// A u32 cannot represent all values a 10-digit integer can, but since not that many Wikipedia articles exist for any language, this should
+/// be sufficient and saves memory and disk space.
 pub type PageId = u32;
 
-/// Representation of a linktarget table id.
+/// Representation of a linktarget table id. The database schema uses 20-digit unsigned integers (<https://www.mediawiki.org/wiki/Manual:Linktarget_table>).
+/// A u64 cannot represent all values a 20-digit integer can, but since not that many Wikipedia articles exist for any language, this should
+/// be sufficient and saves memory and disk space.
 pub type LinkTargetId = u64;
 
+/// Schemas for the incoming, outgoing, and redirects databases/tables. The key is the page id, and the value is a list of page ids.
+/// The incoming table represents the list of pages that link to a given page, the outgoing table represents the list of pages that a given page links to,
+/// and the redirects table represents the mapping of redirecting pages to their target pages.
 type HeedIncoming = heed::Database<SerdeBincode<PageId>, SerdeBincode<Vec<PageId>>>;
 type HeedOutgoing = heed::Database<SerdeBincode<PageId>, SerdeBincode<Vec<PageId>>>;
 type HeedRedirects = heed::Database<SerdeBincode<PageId>, SerdeBincode<PageId>>;
 
+/// A read-only transaction on a database that wraps around an underlying Heed transaction.
+/// It provides methods to query incoming and outgoing links and redirects.
 pub struct ReadTransaction<'db> {
     inner: heed::RoTxn<'db>,
     incoming: HeedIncoming,
@@ -147,6 +159,9 @@ impl<'db> ReadTransaction<'db> {
     }
 }
 
+/// A write transaction on a database that wraps around an underlying Heed transaction.
+/// It provides methods to insert incoming and outgoing links and redirects.
+/// The transaction is not committed until the `commit` method is called.
 pub struct WriteTransaction<'db> {
     inner: heed::RwTxn<'db>,
     incoming: HeedIncoming,
@@ -207,21 +222,25 @@ impl<'db> WriteTransaction<'db> {
     }
 }
 
+/// A struct holding two maps acting as a buffer for inserting links into the database.
 struct LinkBuffer {
     incoming: HashMap<PageId, Vec<PageId>>,
     outgoing: HashMap<PageId, Vec<PageId>>,
 }
 
 impl LinkBuffer {
+    /// Insert a link into the buffer.
     fn insert(&mut self, source: PageId, target: PageId) {
         self.incoming.entry(target).or_default().push(source);
         self.outgoing.entry(source).or_default().push(target);
     }
 
+    /// Take the incoming links buffer and return it. The buffer is replaced with a new empty one.
     fn take_incoming(&mut self) -> HashMap<PageId, Vec<PageId>> {
         mem::replace(&mut self.incoming, HashMap::new())
     }
 
+    /// Take the outgoing links buffer and return it. The buffer is replaced with a new empty one.
     fn take_outgoing(&mut self) -> HashMap<PageId, Vec<PageId>> {
         mem::replace(&mut self.outgoing, HashMap::new())
     }
@@ -240,6 +259,9 @@ impl Default for LinkBuffer {
     }
 }
 
+/// A buffered write transaction for inserting links into the database. The transaction buffers incoming and outgoing links and flushes them to disk
+/// when the buffer grows too large or when the transaction is committed. The transaction is not committed until the `flush_and_commit` method is called.
+/// This is more efficient than directly inserting links into the database, as it reduces the number of transactions and thus the number of disk writes.
 pub struct BufferedLinkWriteTransaction<'scope> {
     buffer: Arc<Mutex<LinkBuffer>>,
     inserter: ScopedJoinHandle<'scope, Result<usize>>,
@@ -247,6 +269,8 @@ pub struct BufferedLinkWriteTransaction<'scope> {
 }
 
 impl<'scope> BufferedLinkWriteTransaction<'scope> {
+    /// Begin a new buffered write transaction. Takes a process memory limit, which is used to determine when to flush the buffer to disk.
+    /// This limit can be exceeded temporarily, but should stay below the limit generally. Requires a thread scope to spawn the inserter thread.
     pub fn begin(
         db: Database,
         process_memory_limit: u64,
@@ -339,7 +363,7 @@ impl<'scope> BufferedLinkWriteTransaction<'scope> {
         self.buffer.lock().unwrap().insert(source, target);
     }
 
-    /// Flush the entire buffer to disk and return the total number of unique inserted links.
+    /// Flush the entire buffer to disk and return the total number of unique inserted links of this transaction.
     pub fn flush_and_commit(self) -> Result<usize> {
         self.flush_tx.send(())?;
 

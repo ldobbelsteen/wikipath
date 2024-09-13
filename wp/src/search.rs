@@ -58,7 +58,7 @@ impl Database {
         while overlapping.is_empty() && !forward_queue.is_empty() && !backward_queue.is_empty() {
             let mut new_predecessors: HashMap<PageId, HashSet<PageId>> = HashMap::new();
 
-            // Take the direction that has the shortest queue.
+            // Take the direction that has the shortest queue (for efficiency).
             if forward_queue.len() < backward_queue.len() {
                 for _ in 0..forward_queue.len() {
                     let page = forward_queue.pop_front().unwrap(); // forward queue cannot be empty by the while-loop guard

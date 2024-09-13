@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use sysinfo::{Pid, System};
 
+/// Struct that allows checking the memory usage of the current process.
 #[derive(Debug)]
 pub struct ProcessMemoryUsageChecker {
     system: System,

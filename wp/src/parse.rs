@@ -16,6 +16,8 @@ use std::{
     thread,
 };
 
+/// Struct representing a chunk of bytes. The end field indicates the end of the valid data in the
+/// data field.
 #[derive(Debug)]
 pub struct Chunk {
     data: Vec<u8>,
@@ -23,9 +25,10 @@ pub struct Chunk {
 }
 
 impl TableDumpFiles {
+    /// Parse the page table dump file and return a mapping from page titles to page ids.
     pub fn parse_page_table_dump(&self, thread_count: usize) -> Result<HashMap<String, PageId>> {
         let result = Arc::new(Mutex::new(HashMap::new()));
-        Self::parse_dump_file(
+        sliding_regex_file(
             self.page.as_path(),
             &Regex::new(
                 r"\(([0-9]{1,10}),0,'(.{0,255}?)',[01],[01],0.[0-9]{1,32}?,'[0-9]{14}',(?:'[0-9]{14}'|NULL),[0-9]{1,10},[0-9]{1,10},(?:'.{0,32}'|NULL),(?:'.{0,35}'|NULL)\)",
@@ -58,13 +61,14 @@ impl TableDumpFiles {
             .into_inner()?)
     }
 
+    /// Parse the redirect table dump file and return a mapping from source page ids to target page ids.
     pub fn parse_redirect_table_dump(
         &self,
         title_to_id: &HashMap<String, PageId>,
         thread_count: usize,
     ) -> Result<HashMap<PageId, PageId>> {
         let result = Arc::new(Mutex::new(HashMap::new()));
-        Self::parse_dump_file(
+        sliding_regex_file(
             self.redirect.as_path(),
             &Regex::new(
                 r"\(([0-9]{1,10}),0,'(.{0,255}?)',(?:'.{0,32}'|NULL),(?:'.{0,255}'|NULL)\)",
@@ -114,13 +118,14 @@ impl TableDumpFiles {
             .into_inner()?)
     }
 
+    /// Parse the linktarget table dump file and return a mapping from link target ids to page ids.
     pub fn parse_linktarget_table_dump(
         &self,
         title_to_id: &HashMap<String, PageId>,
         thread_count: usize,
     ) -> Result<HashMap<LinkTargetId, PageId>> {
         let result = Arc::new(Mutex::new(HashMap::new()));
-        Self::parse_dump_file(
+        sliding_regex_file(
             self.linktarget.as_path(),
             &Regex::new(r"\(([0-9]{1,20}),0,'(.{0,255}?)'\)")?, // https://www.mediawiki.org/wiki/Manual:Linktarget_table
             1 + 20 + 4 + 255 + 2,
@@ -162,6 +167,7 @@ impl TableDumpFiles {
             .into_inner()?)
     }
 
+    /// Parse the pagelinks table dump file and output all links to a closure.
     pub fn parse_pagelinks_table_dump<F>(
         &self,
         linktarget_to_target: &HashMap<LinkTargetId, PageId>,
@@ -172,7 +178,7 @@ impl TableDumpFiles {
     where
         F: Fn(PageId, PageId) + Clone + Send + Sync,
     {
-        Self::parse_dump_file(
+        sliding_regex_file(
             self.pagelinks.as_path(),
             &Regex::new(r"\(([0-9]{1,10}),0,([0-9]{1,20})\)")?, // https://www.mediawiki.org/wiki/Manual:Pagelinks_table
             1 + 10 + 3 + 20 + 1,
@@ -210,107 +216,111 @@ impl TableDumpFiles {
             thread_count,
         )
     }
+}
 
-    pub fn parse_dump_file<'a, F>(
-        path: &Path,
-        regex: &Regex,
-        max_captures_size: usize,
-        consume_captures: F,
-        thread_count: usize,
-    ) -> Result<()>
-    where
-        F: 'a + FnMut(regex::bytes::Captures) -> Result<()> + Send + Sync + Clone,
-    {
-        thread::scope(|s| -> Result<()> {
-            let path = PathBuf::from(path);
-            let parser_count = max(thread_count - 1, 1);
+/// Parse a file by running a regex on its contents in a sliding window fashion. It does so concurrently
+/// in a highly optimized manner, using a fixed number of threads. Regex matches are output to a closure.
+/// For the sliding window, a maximum match size in byte size should be specified. This is to ensure that
+/// the regex can match across chunk boundaries when reading the file.
+fn sliding_regex_file<'a, F>(
+    path: &Path,
+    regex: &Regex,
+    max_match_size: usize,
+    consume_captures: F,
+    thread_count: usize,
+) -> Result<()>
+where
+    F: 'a + FnMut(regex::bytes::Captures) -> Result<()> + Send + Sync + Clone,
+{
+    thread::scope(|s| -> Result<()> {
+        let path = PathBuf::from(path);
+        let parser_count = max(thread_count - 1, 1);
 
-            // Create channels for sending data chunks back and forth between the reader and parsers.
-            let (fresh_tx, fresh_rx) = crossbeam_channel::unbounded::<Option<Chunk>>();
-            let (stale_tx, stale_rx) = crossbeam_channel::unbounded::<Option<Chunk>>();
+        // Create channels for sending data chunks back and forth between the reader and parsers.
+        let (fresh_tx, fresh_rx) = crossbeam_channel::unbounded::<Option<Chunk>>();
+        let (stale_tx, stale_rx) = crossbeam_channel::unbounded::<Option<Chunk>>();
 
-            // Spawn the chunk parsers.
-            for _ in 0..parser_count {
-                let regex = regex.clone();
-                let mut consume_capture = consume_captures.clone();
-                let fresh_rx = fresh_rx.clone();
-                let stale_tx = stale_tx.clone();
-                s.spawn(move || {
-                    for chunk in fresh_rx {
-                        if let Some(chunk) = chunk {
-                            // Find all captures in chunk and consume results.
-                            for captures in regex.captures_iter(&chunk.data[..chunk.end]) {
-                                if let Err(e) = consume_capture(captures) {
-                                    log::warn!("error while consuming capture: {e}");
-                                }
+        // Spawn the chunk parsers.
+        for _ in 0..parser_count {
+            let regex = regex.clone();
+            let mut consume_capture = consume_captures.clone();
+            let fresh_rx = fresh_rx.clone();
+            let stale_tx = stale_tx.clone();
+            s.spawn(move || {
+                for chunk in fresh_rx {
+                    if let Some(chunk) = chunk {
+                        // Find all captures in chunk and consume results.
+                        for captures in regex.captures_iter(&chunk.data[..chunk.end]) {
+                            if let Err(e) = consume_capture(captures) {
+                                log::warn!("error while consuming capture: {e}");
                             }
-                            stale_tx.send(Some(chunk)).ok(); // Send back chunk.
-                        } else {
-                            stale_tx.send(None).ok(); // Acknowledge end-of-stream.
-                            break;
                         }
+                        stale_tx.send(Some(chunk)).ok(); // Send back chunk.
+                    } else {
+                        stale_tx.send(None).ok(); // Acknowledge end-of-stream.
+                        break;
                     }
-                });
-            }
+                }
+            });
+        }
 
-            let file = File::open(path)?;
-            let mut reader = GzDecoder::new(file);
-            let chunk_count = parser_count * 2;
-            let chunk_size = 64 * 1024;
+        let file = File::open(path)?;
+        let mut reader = GzDecoder::new(file);
+        let chunk_count = parser_count * 2;
+        let chunk_size = 64 * 1024;
 
-            // Create new chunks and send to ourselves to be populated.
-            for _ in 0..(chunk_count - 1) {
-                let new_chunk = Chunk {
-                    data: vec![0; chunk_size],
-                    end: 0,
-                };
-                stale_tx.send(Some(new_chunk))?;
-            }
-
-            // Cached chunk to facilitate overlap copying.
-            let mut current_chunk = Chunk {
+        // Create new chunks and send to ourselves to be populated.
+        for _ in 0..(chunk_count - 1) {
+            let new_chunk = Chunk {
                 data: vec![0; chunk_size],
                 end: 0,
             };
+            stale_tx.send(Some(new_chunk))?;
+        }
 
-            // Populate already handled chunks with new data.
-            for new_chunk in &stale_rx {
-                let mut new_chunk = new_chunk.unwrap(); // Unwrap, since parser only sends none when we have done so
-                let overlap_start = if current_chunk.end >= max_captures_size {
-                    current_chunk.end - max_captures_size
-                } else {
-                    0
-                };
-                let overlap_end = current_chunk.end;
-                let overlap = overlap_end - overlap_start;
-                new_chunk.data[..overlap]
-                    .copy_from_slice(&current_chunk.data[overlap_start..overlap_end]);
-                let old_chunk = std::mem::replace(&mut current_chunk, new_chunk);
-                fresh_tx.send(Some(old_chunk))?;
-                let bytes_read = reader.read(&mut current_chunk.data[overlap..])?;
-                if bytes_read == 0 {
-                    break;
-                }
-                current_chunk.end = overlap + bytes_read;
+        // Cached chunk to facilitate overlap copying.
+        let mut current_chunk = Chunk {
+            data: vec![0; chunk_size],
+            end: 0,
+        };
+
+        // Populate already handled chunks with new data.
+        for new_chunk in &stale_rx {
+            let mut new_chunk = new_chunk.unwrap(); // Unwrap, since parser only sends none when we have done so
+            let overlap_start = if current_chunk.end >= max_match_size {
+                current_chunk.end - max_match_size
+            } else {
+                0
+            };
+            let overlap_end = current_chunk.end;
+            let overlap = overlap_end - overlap_start;
+            new_chunk.data[..overlap]
+                .copy_from_slice(&current_chunk.data[overlap_start..overlap_end]);
+            let old_chunk = std::mem::replace(&mut current_chunk, new_chunk);
+            fresh_tx.send(Some(old_chunk))?;
+            let bytes_read = reader.read(&mut current_chunk.data[overlap..])?;
+            if bytes_read == 0 {
+                break;
             }
-            fresh_tx.send(Some(current_chunk))?;
+            current_chunk.end = overlap + bytes_read;
+        }
+        fresh_tx.send(Some(current_chunk))?;
 
-            // Send end-of-stream message to parsers
-            for _ in 0..parser_count {
-                fresh_tx.send(None)?;
+        // Send end-of-stream message to parsers
+        for _ in 0..parser_count {
+            fresh_tx.send(None)?;
+        }
+
+        // Receive end-of-stream acknowledgements. Ignore any stale chunks.
+        let mut acks = 0;
+        while acks < parser_count {
+            if stale_rx.iter().next().unwrap().is_none() {
+                acks += 1;
             }
+        }
 
-            // Receive end-of-stream acknowledgements. Ignore any stale chunks.
-            let mut acks = 0;
-            while acks < parser_count {
-                if stale_rx.iter().next().unwrap().is_none() {
-                    acks += 1;
-                }
-            }
-
-            Ok(())
-        })
-    }
+        Ok(())
+    })
 }
 
 /// Remove chains of redirects from a redirect mapping by concatenating redirects to redirects into
