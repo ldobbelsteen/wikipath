@@ -1,7 +1,8 @@
 use crate::memory::ProcessMemoryUsageChecker;
 use anyhow::{anyhow, Result};
 use hashbrown::HashMap;
-use redb::{ReadOnlyTable, ReadableTable, Table, TableDefinition};
+use heed::types::SerdeBincode;
+use heed::EnvOpenOptions;
 use regex::Regex;
 use serde::Serialize;
 use std::path::Path;
@@ -19,30 +20,67 @@ pub struct Metadata {
 }
 
 impl Metadata {
-    /// Extract metadata from the name of a database.
-    fn from_name(s: &str) -> Result<Self> {
-        let re = Regex::new(r"(.+)-(.+).redb(?:\.tmp)?")?;
+    /// Extract metadata from the name of a database. Returns whether the name is temporary.
+    fn from_name(s: &str) -> Result<(Self, bool)> {
+        let re = Regex::new(r"wp-([a-zA-Z]+)-([0-9]+)(-tmp)?")?;
         if let Some(caps) = re.captures(s) {
             if let Some(language_code) = caps.get(1) {
                 if let Some(date_code) = caps.get(2) {
-                    return Ok(Metadata {
-                        language_code: language_code.as_str().into(),
-                        date_code: date_code.as_str().into(),
-                    });
+                    let is_tmp = caps.get(3).is_some();
+                    return Ok((
+                        Metadata {
+                            language_code: language_code.as_str().into(),
+                            date_code: date_code.as_str().into(),
+                        },
+                        is_tmp,
+                    ));
                 }
             }
         }
-        Err(anyhow!("database path '{}' is not valid", s))
+        Err(anyhow!("database name '{}' is not valid", s))
     }
 
     /// Create name containing all database metadata.
     pub fn to_name(&self) -> String {
-        format!("{}-{}.redb", self.language_code, self.date_code)
+        format!("wp-{}-{}", self.language_code, self.date_code)
     }
 
     /// Create temp name containing all database metadata.
     pub fn to_tmp_name(&self) -> String {
-        format!("{}-{}.redb.tmp", self.language_code, self.date_code)
+        format!("wp-{}-{}-tmp", self.language_code, self.date_code)
+    }
+}
+
+#[derive(Debug)]
+pub struct Database {
+    env: heed::Env,
+    pub metadata: Metadata,
+    pub is_tmp: bool,
+}
+
+impl Database {
+    /// Open a database environment by creating a directory at a path.
+    /// Returns an error if the database name in the path is not in the correct format.
+    pub fn open(path: &Path) -> Result<Self> {
+        let filename = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .ok_or(anyhow!("database path '{}' is not valid", path.display()))?;
+        let (metadata, is_tmp) = Metadata::from_name(filename)?;
+
+        std::fs::create_dir_all(path)?;
+        let env = unsafe {
+            EnvOpenOptions::new()
+                .max_dbs(3) // incoming, outgoing, redirects
+                .map_size(64 * 1024 * 1024 * 1024) // max database size
+                .open(path)?
+        };
+
+        Ok(Self {
+            env,
+            metadata,
+            is_tmp,
+        })
     }
 }
 
@@ -52,102 +90,115 @@ pub type PageId = u32;
 /// Representation of a linktarget table id.
 pub type LinkTargetId = u64;
 
-const INCOMING: TableDefinition<PageId, Vec<PageId>> = TableDefinition::new("incoming");
-const OUTGOING: TableDefinition<PageId, Vec<PageId>> = TableDefinition::new("outgoing");
-const REDIRECTS: TableDefinition<PageId, PageId> = TableDefinition::new("redirects");
+type HeedIncoming = heed::Database<SerdeBincode<PageId>, SerdeBincode<Vec<PageId>>>;
+type HeedOutgoing = heed::Database<SerdeBincode<PageId>, SerdeBincode<Vec<PageId>>>;
+type HeedRedirects = heed::Database<SerdeBincode<PageId>, SerdeBincode<PageId>>;
 
-#[derive(Debug)]
-pub struct Database {
-    inner: redb::Database,
-    pub metadata: Metadata,
+pub struct ReadTransaction<'db> {
+    inner: heed::RoTxn<'db>,
+    incoming: HeedIncoming,
+    outgoing: HeedOutgoing,
+    redirects: HeedRedirects,
 }
 
-impl Database {
-    /// Open a database file. If the file does not exist yet, a new one is created. Will return an
-    /// error if the file name in the path is not in the correct format.
-    pub fn open(path: &Path) -> Result<Self> {
-        let filename = path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .ok_or(anyhow!("database path '{}' is not valid", path.display()))?;
-        let metadata = Metadata::from_name(filename)?;
-        let inner = redb::Database::create(path)?;
-        Ok(Self { inner, metadata })
-    }
+impl<'db> ReadTransaction<'db> {
+    pub fn begin(db: &'db Database) -> Result<Self> {
+        let inner = db.env.read_txn()?;
+        let incoming = db
+            .env
+            .open_database(&inner, Some("incoming"))?
+            .ok_or(anyhow!(
+                "database '{}' missing incoming data",
+                db.metadata.to_name()
+            ))?;
+        let outgoing = db
+            .env
+            .open_database(&inner, Some("outgoing"))?
+            .ok_or(anyhow!(
+                "database '{}' missing outgoing data",
+                db.metadata.to_name()
+            ))?;
+        let redirects = db
+            .env
+            .open_database(&inner, Some("redirects"))?
+            .ok_or(anyhow!(
+                "database '{}' missing redirects data",
+                db.metadata.to_name()
+            ))?;
 
-    /// Begin a read transaction on the database.
-    pub fn begin_read(&self) -> Result<ReadTransaction> {
-        Ok(ReadTransaction {
-            inner: self.inner.begin_read()?,
+        Ok(Self {
+            inner,
+            incoming,
+            outgoing,
+            redirects,
         })
     }
 
-    /// Begin a write transaction on the database.
-    pub fn begin_write(&self) -> Result<WriteTransaction> {
-        Ok(WriteTransaction {
-            inner: self.inner.begin_write()?,
-        })
-    }
-
-    /// Compact the database file.
-    pub fn compact(&mut self) -> Result<()> {
-        self.inner.compact()?;
-        Ok(())
-    }
-}
-
-pub struct ReadTransaction {
-    inner: redb::ReadTransaction,
-}
-
-impl ReadTransaction {
-    pub fn begin_serve(&self) -> Result<ServeTransaction> {
-        Ok(ServeTransaction {
-            incoming: self.inner.open_table(INCOMING)?,
-            outgoing: self.inner.open_table(OUTGOING)?,
-            redirects: self.inner.open_table(REDIRECTS)?,
-        })
-    }
-}
-
-#[derive(Debug)]
-pub struct ServeTransaction {
-    incoming: ReadOnlyTable<PageId, Vec<PageId>>,
-    outgoing: ReadOnlyTable<PageId, Vec<PageId>>,
-    redirects: ReadOnlyTable<PageId, PageId>,
-}
-
-impl ServeTransaction {
     pub fn incoming_links(&self, target: PageId) -> Result<Vec<PageId>> {
-        match self.incoming.get(target)? {
-            Some(res) => Ok(res.value()),
-            None => Ok(vec![]),
-        }
+        Ok(self.incoming.get(&self.inner, &target)?.unwrap_or(vec![]))
     }
 
     pub fn outgoing_links(&self, source: PageId) -> Result<Vec<PageId>> {
-        match self.outgoing.get(source)? {
-            Some(res) => Ok(res.value()),
-            None => Ok(vec![]),
-        }
+        Ok(self.outgoing.get(&self.inner, &source)?.unwrap_or(vec![]))
     }
 
     pub fn redirect(&self, page: PageId) -> Result<Option<PageId>> {
-        Ok(self.redirects.get(page)?.map(|r| r.value()))
+        Ok(self.redirects.get(&self.inner, &page)?)
     }
 }
 
-pub struct WriteTransaction {
-    inner: redb::WriteTransaction,
+pub struct WriteTransaction<'db> {
+    inner: heed::RwTxn<'db>,
+    incoming: HeedIncoming,
+    outgoing: HeedOutgoing,
+    redirects: HeedRedirects,
 }
 
-impl WriteTransaction {
-    pub fn begin_build(&self) -> Result<BuildTransaction> {
-        Ok(BuildTransaction {
-            redirects: self.inner.open_table(REDIRECTS)?,
-            incoming: self.inner.open_table(INCOMING)?,
-            outgoing: self.inner.open_table(OUTGOING)?,
+impl<'db> WriteTransaction<'db> {
+    pub fn begin(db: &'db Database) -> Result<Self> {
+        let mut inner = db.env.write_txn()?;
+        let incoming = db.env.create_database(&mut inner, Some("incoming"))?;
+        let outgoing = db.env.create_database(&mut inner, Some("outgoing"))?;
+        let redirects = db.env.create_database(&mut inner, Some("redirects"))?;
+
+        Ok(Self {
+            inner,
+            incoming,
+            outgoing,
+            redirects,
         })
+    }
+
+    /// Insert a redirect into the database. Returns an error if the source page already has a redirect.
+    pub fn insert_redirect(&mut self, source: &PageId, target: &PageId) -> Result<()> {
+        if self
+            .redirects
+            .get_or_put(&mut self.inner, source, target)?
+            .is_some()
+        {
+            return Err(anyhow!("redirect source already in the database"));
+        }
+        Ok(())
+    }
+
+    /// Insert incoming links into the database. Returns the number of links inserted.
+    /// TODO: detect duplicates
+    pub fn insert_incoming(&mut self, target: &PageId, sources: &Vec<PageId>) -> Result<usize> {
+        if let Some(mut existing) = self.incoming.get_or_put(&mut self.inner, target, sources)? {
+            existing.extend(sources);
+            self.incoming.put(&mut self.inner, target, &existing)?;
+        }
+        Ok(sources.len())
+    }
+
+    /// Insert outgoing links into the database. Returns the number of links inserted.
+    /// TODO: detect duplicates
+    pub fn insert_outgoing(&mut self, source: &PageId, targets: &Vec<PageId>) -> Result<usize> {
+        if let Some(mut existing) = self.outgoing.get_or_put(&mut self.inner, source, targets)? {
+            existing.extend(targets);
+            self.outgoing.put(&mut self.inner, source, &existing)?;
+        }
+        Ok(targets.len())
     }
 
     pub fn commit(self) -> Result<()> {
@@ -156,101 +207,66 @@ impl WriteTransaction {
     }
 }
 
-#[derive(Debug)]
-pub struct BuildTransaction<'txn> {
-    redirects: Table<'txn, PageId, PageId>,
-    incoming: Table<'txn, PageId, Vec<PageId>>,
-    outgoing: Table<'txn, PageId, Vec<PageId>>,
+struct LinkBuffer {
+    incoming: HashMap<PageId, Vec<PageId>>,
+    outgoing: HashMap<PageId, Vec<PageId>>,
 }
 
-impl<'txn> BuildTransaction<'txn> {
-    pub fn insert_redirects(&mut self, redirs: &HashMap<PageId, PageId>) -> Result<()> {
-        for (source, target) in redirs {
-            if self.redirects.insert(source, target)?.is_some() {
-                return Err(anyhow!("redirect source already in the database"));
-            }
-        }
-        Ok(())
+impl LinkBuffer {
+    fn insert(&mut self, source: PageId, target: PageId) {
+        self.incoming.entry(target).or_default().push(source);
+        self.outgoing.entry(source).or_default().push(target);
     }
 
-    pub fn insert_incoming(&mut self, incoming: HashMap<PageId, Vec<PageId>>) -> Result<usize> {
-        let mut removed = 0;
-        let mut added = 0;
-
-        for (target, mut sources) in incoming {
-            if let Some(existing) = self.incoming.get(target)? {
-                let mut existing = existing.value();
-                removed += existing.len();
-                if existing.len() > sources.len() {
-                    existing.extend(sources);
-                    sources = existing;
-                } else {
-                    sources.extend(existing);
-                }
-            }
-            added += sources.len();
-            self.incoming.insert(target, sources)?;
-        }
-
-        Ok(added - removed)
+    fn take_incoming(&mut self) -> HashMap<PageId, Vec<PageId>> {
+        mem::replace(&mut self.incoming, HashMap::new())
     }
 
-    pub fn insert_outgoing(&mut self, outgoing: HashMap<PageId, Vec<PageId>>) -> Result<usize> {
-        let mut removed = 0;
-        let mut added = 0;
+    fn take_outgoing(&mut self) -> HashMap<PageId, Vec<PageId>> {
+        mem::replace(&mut self.outgoing, HashMap::new())
+    }
 
-        for (source, mut targets) in outgoing {
-            if let Some(existing) = self.outgoing.get(source)? {
-                let mut existing = existing.value();
-                removed += existing.len();
-                if existing.len() > targets.len() {
-                    existing.extend(targets);
-                    targets = existing;
-                } else {
-                    targets.extend(existing);
-                }
-            }
-            added += targets.len();
-            self.outgoing.insert(source, targets)?;
-        }
-
-        Ok(added - removed)
+    fn len(&self) -> usize {
+        self.incoming.len() + self.outgoing.len()
     }
 }
 
-#[derive(Debug)]
-pub struct BufferedLinkInserter<'scope> {
-    incoming_buffer: Arc<Mutex<HashMap<PageId, Vec<PageId>>>>,
-    outgoing_buffer: Arc<Mutex<HashMap<PageId, Vec<PageId>>>>,
+impl Default for LinkBuffer {
+    fn default() -> Self {
+        Self {
+            incoming: HashMap::new(),
+            outgoing: HashMap::new(),
+        }
+    }
+}
+
+pub struct BufferedLinkWriteTransaction<'scope> {
+    buffer: Arc<Mutex<LinkBuffer>>,
     inserter: ScopedJoinHandle<'scope, Result<usize>>,
     flush_tx: Sender<()>,
 }
 
-impl<'scope> BufferedLinkInserter<'scope> {
-    /// Create a buffered link inserter from a build transaction. This caches link inserts in a
-    /// buffer and periodically flushes the buffer to disk if the specified number of bytes of
-    /// memory is exceeded for the entire process.
-    pub fn for_txn<'env, 'txn>(
-        txn: &'env mut BuildTransaction<'txn>,
-        memory_limit: u64,
-        scope: &'scope Scope<'scope, 'env>,
+impl<'scope> BufferedLinkWriteTransaction<'scope> {
+    pub fn begin(
+        db: Database,
+        process_memory_limit: u64,
+        thread_scope: &'scope Scope<'scope, '_>,
     ) -> Result<Self> {
         let (flush_tx, flush_rx) = mpsc::channel::<()>();
 
-        let incoming_buffer = Arc::new(Mutex::default());
-        let incoming_buffer_c = incoming_buffer.clone();
-
-        let outgoing_buffer = Arc::new(Mutex::default());
-        let outgoing_buffer_c = outgoing_buffer.clone();
+        let buffer: Arc<Mutex<LinkBuffer>> = Arc::default();
+        let buffer_clone = buffer.clone();
 
         let mut memory_checker = ProcessMemoryUsageChecker::new()?;
-        if memory_checker.get() > memory_limit {
+        if memory_checker.get() > process_memory_limit {
             return Err(anyhow!(
                 "memory limit exceeded already before buffering links"
             ));
         }
 
-        let inserter = scope.spawn(move || {
+        let inserter = thread_scope.spawn(move || {
+            let mut txn = WriteTransaction::begin(&db)?;
+
             let mut incoming_count = 0;
             let mut outgoing_count = 0;
 
@@ -260,14 +276,16 @@ impl<'scope> BufferedLinkInserter<'scope> {
 
                 if flush {
                     // Flush the incoming buffer.
-                    let incoming_buffer_taken =
-                        mem::replace(&mut *incoming_buffer_c.lock().unwrap(), HashMap::new());
-                    incoming_count += txn.insert_incoming(incoming_buffer_taken)?;
+                    let incoming_buffer_taken = buffer_clone.lock().unwrap().take_incoming();
+                    for (target, sources) in &incoming_buffer_taken {
+                        incoming_count += txn.insert_incoming(target, sources)?;
+                    }
 
                     // Flush the outgoing buffer.
-                    let outgoing_buffer_taken =
-                        mem::replace(&mut *outgoing_buffer_c.lock().unwrap(), HashMap::new());
-                    outgoing_count += txn.insert_outgoing(outgoing_buffer_taken)?;
+                    let outgoing_buffer_taken = buffer_clone.lock().unwrap().take_outgoing();
+                    for (source, targets) in &outgoing_buffer_taken {
+                        outgoing_count += txn.insert_outgoing(source, targets)?;
+                    }
 
                     break;
                 }
@@ -275,20 +293,22 @@ impl<'scope> BufferedLinkInserter<'scope> {
                 // If we exceed the limit, flush the buffered incoming links first, since the links
                 // often seem to be sorted by target title in the dumps and thus we are less likely to
                 // incur the cost of updating a value in the database as opposed to just inserting.
-                if memory_checker.get() > memory_limit {
+                if memory_checker.get() > process_memory_limit {
                     log::info!("flushing buffered incoming links due to reaching memory limit...");
-                    let incoming_buffer_taken =
-                        mem::replace(&mut *incoming_buffer_c.lock().unwrap(), HashMap::new());
-                    incoming_count += txn.insert_incoming(incoming_buffer_taken)?;
+                    let incoming_buffer_taken = buffer_clone.lock().unwrap().take_incoming();
+                    for (target, sources) in &incoming_buffer_taken {
+                        incoming_count += txn.insert_incoming(target, sources)?;
+                    }
 
                     // If we still exceed the limit, flush the buffered outgoing links second.
-                    if memory_checker.get() > memory_limit {
+                    if memory_checker.get() > process_memory_limit {
                         log::info!(
                             "flushing buffered outgoing links due to reaching memory limit..."
                         );
-                        let outgoing_buffer_taken =
-                            mem::replace(&mut *outgoing_buffer_c.lock().unwrap(), HashMap::new());
-                        outgoing_count += txn.insert_outgoing(outgoing_buffer_taken)?;
+                        let outgoing_buffer_taken = buffer_clone.lock().unwrap().take_outgoing();
+                        for (source, targets) in &outgoing_buffer_taken {
+                            outgoing_count += txn.insert_outgoing(source, targets)?;
+                        }
                     }
                 }
 
@@ -303,43 +323,31 @@ impl<'scope> BufferedLinkInserter<'scope> {
                 ));
             }
 
+            txn.commit()?;
             Ok(incoming_count)
         });
 
         Ok(Self {
-            incoming_buffer,
-            outgoing_buffer,
+            buffer,
             inserter,
             flush_tx,
         })
     }
 
     /// Insert a link into the buffer.
-    pub fn insert(&self, source: PageId, target: PageId) {
-        self.incoming_buffer
-            .lock()
-            .unwrap()
-            .entry(target)
-            .or_default()
-            .push(source);
-        self.outgoing_buffer
-            .lock()
-            .unwrap()
-            .entry(source)
-            .or_default()
-            .push(target);
+    pub fn insert_link(&self, source: PageId, target: PageId) {
+        self.buffer.lock().unwrap().insert(source, target);
     }
 
     /// Flush the entire buffer to disk and return the total number of unique inserted links.
-    pub fn flush(self) -> Result<usize> {
+    pub fn flush_and_commit(self) -> Result<usize> {
         self.flush_tx.send(())?;
+
         let link_count = self.inserter.join().unwrap()?;
-        if self.incoming_buffer.lock().unwrap().len() > 0 {
-            return Err(anyhow!("incoming buffer unexpectedly not empty"));
+        if self.buffer.lock().unwrap().len() > 0 {
+            return Err(anyhow!("link buffer incoming unexpectedly not empty"));
         }
-        if self.outgoing_buffer.lock().unwrap().len() > 0 {
-            return Err(anyhow!("outgoing buffer unexpectedly not empty"));
-        }
+
         Ok(link_count)
     }
 }

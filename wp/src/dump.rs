@@ -136,6 +136,7 @@ impl TableDumpFiles {
             if target.exists() {
                 File::options().append(true).open(&target)
             } else {
+                std::fs::create_dir_all(dumps_dir)?;
                 File::create(&target)
             }
         }?;

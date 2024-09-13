@@ -78,13 +78,10 @@ async fn main() -> Result<()> {
                     memory,
                 } => {
                     let databases_dir = Path::new(&databases);
-                    std::fs::create_dir_all(databases_dir)?;
-
                     let dumps_dir = dumps.map_or(std::env::temp_dir().join("wikipath"), PathBuf::from);
-                    std::fs::create_dir_all(&dumps_dir)?;
-
                     let thread_count = threads.unwrap_or_else(num_cpus::get);
-                    let memory_limit = memory * 1024 * 1024 * 1024;
+                    let process_memory_limit = memory * 1024 * 1024 * 1024;
+
                     for language_code in languages.split(',') {
                         build::build(
                             language_code,
@@ -92,7 +89,7 @@ async fn main() -> Result<()> {
                             databases_dir,
                             &dumps_dir,
                             thread_count,
-                            memory_limit,
+                            process_memory_limit,
                         )
                         .await?;
                     }

@@ -1,18 +1,18 @@
 [package]
 name = "wp"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [dependencies]
-anyhow = "1.0.86"
+anyhow = "1.0.87"
 crossbeam-channel = "0.5.13"
 data-encoding = "2.6.0"
-flate2 = "1.0.31"
+flate2 = "1.0.33"
 hashbrown = "0.14.5"
+heed = "0.20.5"
 log = "0.4.22"
-redb = "2.1.1"
 regex = "1.10.6"
-reqwest = { version = "0.12.5", features = ["stream"] }
+reqwest = { version = "0.12.7", features = ["stream"] }
 ring = "0.17.8"
-serde = { version = "1.0.208", features = ["derive"] }
+serde = { version = "1.0.210", features = ["derive"] }
 sysinfo = "0.30.13"

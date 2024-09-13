@@ -9,9 +9,10 @@ mod memory;
 mod parse;
 mod search;
 
-pub use database::BufferedLinkInserter;
+pub use database::BufferedLinkWriteTransaction;
 pub use database::Database;
 pub use database::Metadata;
 pub use database::PageId;
+pub use database::WriteTransaction;
 pub use dump::TableDumpFiles;
 pub use parse::cleanup_redirects;

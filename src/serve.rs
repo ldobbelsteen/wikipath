@@ -96,31 +96,6 @@ async fn frontend_asset_handler(uri: Uri) -> Response {
 pub async fn serve(databases_dir: &Path, listening_port: u16) -> Result<()> {
     let databases: Databases = Arc::new(RwLock::new(HashMap::new()));
 
-    let databases_clone = databases.clone();
-    let databases_dir_clone = databases_dir.to_path_buf();
-    let loader_handle: JoinHandle<Result<()>> = tokio::spawn(async move {
-        for entry in fs::read_dir(databases_dir_clone)? {
-            let path = entry?.path();
-            if let Some(ext) = path.extension() {
-                if ext == "redb" {
-                    match Database::open(&path) {
-                        Ok(database) => {
-                            databases_clone
-                                .write()
-                                .unwrap()
-                                .insert(database.metadata.clone(), database);
-                            log::info!("finished opening database '{}'...", path.display());
-                        }
-                        Err(err) => {
-                            log::warn!("skipping database '{}': {}", path.display(), err);
-                        }
-                    }
-                }
-            }
-        }
-        Ok(())
-    });
-
     let router = Router::new()
         .route("/api/list_databases", get(list_databases_handler))
         .route(
@@ -130,7 +105,7 @@ pub async fn serve(databases_dir: &Path, listening_port: u16) -> Result<()> {
                 HeaderValue::from_str("max-age=3600")?, // cached for an hour
             )),
         )
-        .layer(Extension(databases))
+        .layer(Extension(databases.clone()))
         .route(
             "/assets/*f",
             get(frontend_asset_handler).layer(SetResponseHeaderLayer::overriding(
@@ -141,15 +116,43 @@ pub async fn serve(databases_dir: &Path, listening_port: u16) -> Result<()> {
         .fallback(frontend_asset_handler)
         .layer(TimeoutLayer::new(Duration::from_secs(10)));
 
+    log::info!("listening on http://localhost:{listening_port}...");
     let listener = TcpListener::bind(format!(":::{listening_port}")).await?;
     let listener_handle: JoinHandle<Result<()>> = tokio::spawn(async move {
         axum::serve(listener, router).await?;
         Ok(())
     });
 
-    log::info!("listening on http://localhost:{listening_port}...");
+    let databases_dir = databases_dir.to_path_buf();
+    let loader_handle: JoinHandle<Result<()>> = tokio::spawn(async move {
+        for entry in fs::read_dir(databases_dir)? {
+            let path = entry?.path();
 
-    // Wait for the loader and listener and return the first error that may occur.
+            log::info!("opening database '{}'...", path.display());
+            match Database::open(&path) {
+                Ok(database) => {
+                    if database.is_tmp {
+                        log::warn!(
+                            "skipping database '{}': database is temporary",
+                            path.display()
+                        );
+                    } else {
+                        databases
+                            .write()
+                            .unwrap()
+                            .insert(database.metadata.clone(), database);
+                        log::info!("finished opening database '{}'...", path.display());
+                    }
+                }
+                Err(err) => {
+                    log::warn!("skipping database '{}': {}", path.display(), err);
+                }
+            }
+        }
+        Ok(())
+    });
+
+    // Return the first error that may occur between the loader and listener.
     match tokio::try_join!(loader_handle, listener_handle)? {
         (Err(err), _) | (_, Err(err)) => Err(err),
         (Ok(()), Ok(())) => Ok(()),

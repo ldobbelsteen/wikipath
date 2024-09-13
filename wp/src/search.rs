@@ -1,4 +1,4 @@
-use crate::database::{Database, PageId};
+use crate::database::{Database, PageId, ReadTransaction};
 use anyhow::Result;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -21,14 +21,13 @@ impl Database {
     #[allow(clippy::too_many_lines)]
     /// Get the shortest paths between two pages.
     pub fn get_shortest_paths(&self, source: PageId, target: PageId) -> Result<Paths> {
-        let txn = self.begin_read()?;
-        let tables = txn.begin_serve()?;
+        let txn = ReadTransaction::begin(self)?;
 
         // Follow any redirects and report whether they were redirects.
-        let (source, source_is_redirect) = tables
+        let (source, source_is_redirect) = txn
             .redirect(source)?
             .map_or((source, false), |new_source| (new_source, true));
-        let (target, target_is_redirect) = tables
+        let (target, target_is_redirect) = txn
             .redirect(target)?
             .map_or((target, false), |new_target| (new_target, true));
 
@@ -63,7 +62,7 @@ impl Database {
             if forward_queue.len() < backward_queue.len() {
                 for _ in 0..forward_queue.len() {
                     let page = forward_queue.pop_front().unwrap(); // forward queue cannot be empty by the while-loop guard
-                    for out in tables.outgoing_links(page)? {
+                    for out in txn.outgoing_links(page)? {
                         // Only consider if it has not been visited yet.
                         if !forward_predecessors.contains_key(&out) {
                             forward_queue.push_back(out);
@@ -90,7 +89,7 @@ impl Database {
             } else {
                 for _ in 0..backward_queue.len() {
                     let page = backward_queue.pop_front().unwrap(); // backward queue cannot be empty by the while-loop guard
-                    for inc in tables.incoming_links(page)? {
+                    for inc in txn.incoming_links(page)? {
                         // Only consider if it has not been visited yet.
                         if !backward_predecessors.contains_key(&inc) {
                             backward_queue.push_back(inc);
