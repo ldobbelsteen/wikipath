@@ -24,6 +24,13 @@ pub struct Chunk {
     end: usize,
 }
 
+/// Struct representing links from the pagelinks table.
+#[derive(Debug, Default)]
+pub struct Links {
+    pub incoming: HashMap<PageId, Vec<PageId>>,
+    pub outgoing: HashMap<PageId, Vec<PageId>>,
+}
+
 impl TableDumpFiles {
     /// Parse the page table dump file and return a mapping from page titles to page ids.
     pub fn parse_page_table_dump(&self, thread_count: usize) -> Result<HashMap<String, PageId>> {
@@ -167,17 +174,15 @@ impl TableDumpFiles {
             .into_inner()?)
     }
 
-    /// Parse the pagelinks table dump file and output all links to a closure.
-    pub fn parse_pagelinks_table_dump<F>(
+    /// Parse the pagelinks table dump file and return two mappings: one from source to targets and
+    /// one from target to sources, so we can search both ways.
+    pub fn parse_pagelinks_table_dump(
         &self,
         linktarget_to_target: &HashMap<LinkTargetId, PageId>,
         redirects: &HashMap<PageId, PageId>,
         thread_count: usize,
-        output: F,
-    ) -> Result<()>
-    where
-        F: Fn(PageId, PageId) + Clone + Send + Sync,
-    {
+    ) -> Result<Links> {
+        let result = Arc::new(Mutex::new(Links::default()));
         sliding_regex_file(
             self.pagelinks.as_path(),
             &Regex::new(r"\(([0-9]{1,10}),0,([0-9]{1,20})\)")?, // https://www.mediawiki.org/wiki/Manual:Pagelinks_table
@@ -202,19 +207,35 @@ impl TableDumpFiles {
                     return Ok(());
                 };
 
-                let source_clean = *redirects.get(&source).unwrap_or(&source);
-                let target_clean = *redirects.get(&target).unwrap_or(&target);
+                let source = *redirects.get(&source).unwrap_or(&source);
+                let target = *redirects.get(&target).unwrap_or(&target);
 
-                if source_clean == target_clean {
-                    log::debug!("self-link found for page id {}", source_clean);
+                if source == target {
+                    log::debug!("self-link found for page id {}", source);
                     return Ok(());
                 }
 
-                output(source_clean, target_clean);
+                let mut guard = result.lock().unwrap();
+
+                if let Some(prev) = guard.incoming.get_mut(&target) {
+                    prev.push(source);
+                } else {
+                    guard.incoming.insert(target, vec![source]);
+                }
+
+                if let Some(prev) = guard.outgoing.get_mut(&source) {
+                    prev.push(target);
+                } else {
+                    guard.outgoing.insert(source, vec![target]);
+                }
+
                 Ok(())
             },
             thread_count,
-        )
+        )?;
+        Ok(Arc::into_inner(result)
+            .ok_or(anyhow!("failed to unwrap result arc"))?
+            .into_inner()?)
     }
 }
 

@@ -1,27 +1,20 @@
 use anyhow::{anyhow, Result};
 use humantime::format_duration;
 use std::{
-    cmp::max,
     path::{Path, PathBuf},
-    thread,
     time::Instant,
 };
-use wp::{
-    cleanup_redirects, BufferedLinkWriteTransaction, Database, Metadata, TableDumpFiles,
-    WriteTransaction,
-};
+use wp::{cleanup_redirects, Database, Metadata, TableDumpFiles, WriteTransaction};
 
 /// Build a database in a certain language. Outputs the database into the specified directory. Dump
 /// files are downloaded into the specified directory to prevent re-downloading when re-building a
-/// database. Uses the specified number of threads and uses the specified number of bytes as a
-/// ceiling for memory usage.
+/// database. Uses the specified number of threads in total.
 pub async fn build(
     language_code: &str,
     date_code: &str,
     databases_dir: &Path,
     dumps_dir: &Path,
     thread_count: usize,
-    process_memory_limit: u64,
 ) -> Result<PathBuf> {
     let overall_start = Instant::now();
     log::info!("building '{language_code}' database...");
@@ -72,7 +65,7 @@ pub async fn build(
 
         log::info!("cleaning up redirects...");
         cleanup_redirects(&mut redirects);
-        log::info!("{} redirects found!", redirects.len());
+        log::info!("{} clean redirects found!", redirects.len());
 
         log::info!("inserting redirects into database...");
         {
@@ -91,32 +84,45 @@ pub async fn build(
             ));
         }
         log::info!("{} linktargets found!", linktarget_to_target.len());
-        drop(title_to_id);
+
+        drop(title_to_id); // not needed anymore
 
         log::info!("parsing pagelinks table dump...");
-        thread::scope(|thread_scope| -> Result<()> {
-            let txn = BufferedLinkWriteTransaction::begin(db, process_memory_limit, thread_scope)?;
-            files.parse_pagelinks_table_dump(
-                &linktarget_to_target,
-                &redirects,
-                max(thread_count - 1, 1),
-                |source, target| {
-                    txn.insert_link(source, target);
-                },
-            )?;
+        let pagelinks =
+            files.parse_pagelinks_table_dump(&linktarget_to_target, &redirects, thread_count)?;
+        if pagelinks.incoming.is_empty() || pagelinks.outgoing.is_empty() {
+            return Err(anyhow!(
+                "nothing parsed from pagelinks table, possibly caused by schema changes"
+            ));
+        }
 
-            log::info!("inserting buffered links into database...");
-            let link_count = txn.flush_and_commit()?;
+        log::info!("inserting pagelinks into database...");
+        {
+            let mut txn = WriteTransaction::begin(&db)?;
 
-            if link_count == 0 {
+            let mut incoming_count = 0;
+            for (target, sources) in &pagelinks.incoming {
+                txn.insert_incoming(target, sources)?;
+                incoming_count += sources.len();
+            }
+
+            let mut outgoing_count = 0;
+            for (source, targets) in &pagelinks.outgoing {
+                txn.insert_outgoing(source, targets)?;
+                outgoing_count += targets.len();
+            }
+
+            if incoming_count != outgoing_count {
                 return Err(anyhow!(
-                    "nothing parsed from pagelinks table, possibly caused by schema changes"
+                    "incoming and outgoing link count mismatch: {} vs {}",
+                    incoming_count,
+                    outgoing_count
                 ));
             }
-            log::info!("{link_count} links inserted!");
 
-            Ok(())
-        })?;
+            log::info!("{} links inserted!", incoming_count);
+            txn.commit()?;
+        }
     }
 
     std::fs::rename(tmp_path, &final_path)?;

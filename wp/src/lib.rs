@@ -5,11 +5,9 @@
 
 mod database;
 mod dump;
-mod memory;
 mod parse;
 mod search;
 
-pub use database::BufferedLinkWriteTransaction;
 pub use database::Database;
 pub use database::Metadata;
 pub use database::PageId;

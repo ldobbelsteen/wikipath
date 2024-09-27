@@ -33,9 +33,6 @@ enum Action {
         /// Number of threads to use while parsing. Uses all by default.
         #[clap(long)]
         threads: Option<usize>,
-        /// Maximum number of gigabytes (GB) of memory that can be used (higher values prevent the buffer having to be flushed prematurely and in turn improve performance).
-        #[clap(long, default_value = "12")]
-        memory: u64,
     },
     /// Serve Wikipath database(s).
     Serve {
@@ -75,12 +72,10 @@ async fn main() -> Result<()> {
                     databases,
                     dumps,
                     threads,
-                    memory,
                 } => {
                     let databases_dir = Path::new(&databases);
                     let dumps_dir = dumps.map_or(std::env::temp_dir().join("wikipath"), PathBuf::from);
                     let thread_count = threads.unwrap_or_else(num_cpus::get);
-                    let process_memory_limit = memory * 1024 * 1024 * 1024;
 
                     for language_code in languages.split(',') {
                         build::build(
@@ -88,8 +83,7 @@ async fn main() -> Result<()> {
                             &date,
                             databases_dir,
                             &dumps_dir,
-                            thread_count,
-                            process_memory_limit,
+                            thread_count
                         )
                         .await?;
                     }

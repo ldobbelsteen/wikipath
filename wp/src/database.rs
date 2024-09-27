@@ -1,16 +1,12 @@
-use crate::memory::ProcessMemoryUsageChecker;
+#![allow(clippy::ptr_arg)]
+
 use anyhow::{anyhow, Result};
-use hashbrown::HashMap;
 use heed::types::SerdeBincode;
 use heed::EnvOpenOptions;
 use regex::Regex;
 use serde::Serialize;
 use std::path::Path;
-use std::sync::mpsc::Sender;
-use std::sync::{mpsc, Arc, Mutex};
-use std::thread::{Scope, ScopedJoinHandle};
-use std::time::Duration;
-use std::{mem, vec};
+use std::vec;
 
 /// A struct containing metadata about a database. The language code represents
 /// the Wikipedia language, and the date code represents the dump date.
@@ -196,22 +192,26 @@ impl<'db> WriteTransaction<'db> {
         Ok(())
     }
 
-    /// Insert incoming links into the database. Returns the number of links inserted.
-    /// TODO: detect duplicates
-    pub fn insert_incoming(&mut self, target: &PageId, sources: &Vec<PageId>) -> Result<usize> {
-        if let Some(mut existing) = self.incoming.get_or_put(&mut self.inner, target, sources)? {
-            existing.extend(sources);
-            self.incoming.put(&mut self.inner, target, &existing)?;
+    /// Insert incoming links into the database. Returns an error if the target page already has incoming links.
+    pub fn insert_incoming(&mut self, target: &PageId, sources: &Vec<PageId>) -> Result<()> {
+        if self
+            .incoming
+            .get_or_put(&mut self.inner, target, sources)?
+            .is_some()
+        {
+            return Err(anyhow!("incoming target already in the database"));
         }
-        Ok(sources.len())
+        Ok(())
     }
 
-    /// Insert outgoing links into the database. Returns the number of links inserted.
-    /// TODO: detect duplicates
+    /// Insert outgoing links into the database. Returns an error if the source page already has outgoing links.
     pub fn insert_outgoing(&mut self, source: &PageId, targets: &Vec<PageId>) -> Result<usize> {
-        if let Some(mut existing) = self.outgoing.get_or_put(&mut self.inner, source, targets)? {
-            existing.extend(targets);
-            self.outgoing.put(&mut self.inner, source, &existing)?;
+        if self
+            .outgoing
+            .get_or_put(&mut self.inner, source, targets)?
+            .is_some()
+        {
+            return Err(anyhow!("outgoing source already in the database"));
         }
         Ok(targets.len())
     }
@@ -219,161 +219,5 @@ impl<'db> WriteTransaction<'db> {
     pub fn commit(self) -> Result<()> {
         self.inner.commit()?;
         Ok(())
-    }
-}
-
-/// A struct holding two maps acting as a buffer for inserting links into the database.
-struct LinkBuffer {
-    incoming: HashMap<PageId, Vec<PageId>>,
-    outgoing: HashMap<PageId, Vec<PageId>>,
-}
-
-impl LinkBuffer {
-    /// Insert a link into the buffer.
-    fn insert(&mut self, source: PageId, target: PageId) {
-        self.incoming.entry(target).or_default().push(source);
-        self.outgoing.entry(source).or_default().push(target);
-    }
-
-    /// Take the incoming links buffer and return it. The buffer is replaced with a new empty one.
-    fn take_incoming(&mut self) -> HashMap<PageId, Vec<PageId>> {
-        mem::replace(&mut self.incoming, HashMap::new())
-    }
-
-    /// Take the outgoing links buffer and return it. The buffer is replaced with a new empty one.
-    fn take_outgoing(&mut self) -> HashMap<PageId, Vec<PageId>> {
-        mem::replace(&mut self.outgoing, HashMap::new())
-    }
-
-    fn len(&self) -> usize {
-        self.incoming.len() + self.outgoing.len()
-    }
-}
-
-impl Default for LinkBuffer {
-    fn default() -> Self {
-        Self {
-            incoming: HashMap::new(),
-            outgoing: HashMap::new(),
-        }
-    }
-}
-
-/// A buffered write transaction for inserting links into the database. The transaction buffers incoming and outgoing links and flushes them to disk
-/// when the buffer grows too large or when the transaction is committed. The transaction is not committed until the `flush_and_commit` method is called.
-/// This is more efficient than directly inserting links into the database, as it reduces the number of transactions and thus the number of disk writes.
-pub struct BufferedLinkWriteTransaction<'scope> {
-    buffer: Arc<Mutex<LinkBuffer>>,
-    inserter: ScopedJoinHandle<'scope, Result<usize>>,
-    flush_tx: Sender<()>,
-}
-
-impl<'scope> BufferedLinkWriteTransaction<'scope> {
-    /// Begin a new buffered write transaction. Takes a process memory limit, which is used to determine when to flush the buffer to disk.
-    /// This limit can be exceeded temporarily, but should stay below the limit generally. Requires a thread scope to spawn the inserter thread.
-    pub fn begin(
-        db: Database,
-        process_memory_limit: u64,
-        thread_scope: &'scope Scope<'scope, '_>,
-    ) -> Result<Self> {
-        let (flush_tx, flush_rx) = mpsc::channel::<()>();
-
-        let buffer: Arc<Mutex<LinkBuffer>> = Arc::default();
-        let buffer_clone = buffer.clone();
-
-        let mut memory_checker = ProcessMemoryUsageChecker::new()?;
-        if memory_checker.get() > process_memory_limit {
-            return Err(anyhow!(
-                "memory limit exceeded already before buffering links"
-            ));
-        }
-
-        let inserter = thread_scope.spawn(move || {
-            let mut txn = WriteTransaction::begin(&db)?;
-
-            let mut incoming_count = 0;
-            let mut outgoing_count = 0;
-
-            loop {
-                // Wait for a flush signal or timeout for a regular memory check.
-                let force_flush = flush_rx.recv_timeout(Duration::from_secs(1)).is_ok();
-
-                // If we exceed the limit, flush the buffered incoming links first, since the links
-                // often seem to be sorted by target title in the dumps and thus we are less likely to
-                // incur the cost of updating a value in the database as opposed to just inserting.
-                if force_flush || memory_checker.get() > process_memory_limit {
-                    if !force_flush {
-                        log::info!(
-                            "flushing buffered incoming links due to reaching memory limit..."
-                        );
-                    }
-
-                    let mut incoming_buffer_taken = buffer_clone.lock().unwrap().take_incoming();
-                    for (target, sources) in incoming_buffer_taken.drain() {
-                        incoming_count += txn.insert_incoming(&target, &sources)?;
-                    }
-
-                    // Drop the incoming buffer and sleep a bit to give the system time to free memory.
-                    drop(incoming_buffer_taken);
-                    std::thread::sleep(Duration::from_secs(1));
-
-                    // If we still exceed the limit, flush the buffered outgoing links second.
-                    if force_flush || memory_checker.get() > process_memory_limit {
-                        if !force_flush {
-                            log::info!(
-                                "flushing buffered outgoing links due to reaching memory limit..."
-                            );
-                        }
-
-                        let mut outgoing_buffer_taken =
-                            buffer_clone.lock().unwrap().take_outgoing();
-                        for (source, targets) in outgoing_buffer_taken.drain() {
-                            outgoing_count += txn.insert_outgoing(&source, &targets)?;
-                        }
-
-                        // Drop the outgoing buffer and sleep a bit to give the system time to free memory.
-                        drop(outgoing_buffer_taken);
-                        std::thread::sleep(Duration::from_secs(1));
-                    }
-                }
-
-                // If we force flushed, we are done.
-                if force_flush {
-                    break;
-                }
-            }
-
-            if incoming_count != outgoing_count {
-                return Err(anyhow!(
-                    "unexpected discrepancy between incoming and outgoing links"
-                ));
-            }
-
-            txn.commit()?;
-            Ok(incoming_count)
-        });
-
-        Ok(Self {
-            buffer,
-            inserter,
-            flush_tx,
-        })
-    }
-
-    /// Insert a link into the buffer.
-    pub fn insert_link(&self, source: PageId, target: PageId) {
-        self.buffer.lock().unwrap().insert(source, target);
-    }
-
-    /// Flush the entire buffer to disk and return the total number of unique inserted links of this transaction.
-    pub fn flush_and_commit(self) -> Result<usize> {
-        self.flush_tx.send(())?;
-
-        let link_count = self.inserter.join().unwrap()?;
-        if self.buffer.lock().unwrap().len() > 0 {
-            return Err(anyhow!("link buffer incoming unexpectedly not empty"));
-        }
-
-        Ok(link_count)
     }
 }

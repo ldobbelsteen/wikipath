@@ -1,6 +1,6 @@
 [package]
 name = "wp"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 
 [dependencies]
@@ -15,4 +15,3 @@ regex = "1.10.6"
 reqwest = { version = "0.12.7", features = ["stream"] }
 ring = "0.17.8"
 serde = { version = "1.0.210", features = ["derive"] }
-sysinfo = "0.31.4"
