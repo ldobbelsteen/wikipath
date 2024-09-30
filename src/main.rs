@@ -61,7 +61,7 @@ async fn main() -> Result<()> {
 
     tokio::select! {
         res = ctrl_c => {
-            log::info!("ctrl-c received, exiting...");
+            log::info!("ctrl-c received, exiting");
             Ok(res)
         },
         res = async {

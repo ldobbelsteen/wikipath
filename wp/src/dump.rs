@@ -1,4 +1,4 @@
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use data_encoding::HEXLOWER;
 use regex::Regex;
 use ring::digest;
@@ -78,25 +78,25 @@ impl TableDumpFiles {
             &hashes,
             &Regex::new(r"([0-9a-f]{40})  ((.+)wiki-([0-9]{8})-page.sql.gz)")?,
         )
-        .ok_or(anyhow!("missing page dump in sums file"))?;
+        .context("missing page dump in sums file")?;
 
         let redirect = find_hash(
             &hashes,
             &Regex::new(r"([0-9a-f]{40})  ((.+)wiki-([0-9]{8})-redirect.sql.gz)")?,
         )
-        .ok_or(anyhow!("missing redirect dump in sums file"))?;
+        .context("missing redirect dump in sums file")?;
 
         let pagelinks = find_hash(
             &hashes,
             &Regex::new(r"([0-9a-f]{40})  ((.+)wiki-([0-9]{8})-pagelinks.sql.gz)")?,
         )
-        .ok_or(anyhow!("missing pagelinks dump in sums file"))?;
+        .context("missing pagelinks dump in sums file")?;
 
         let linktarget = find_hash(
             &hashes,
             &Regex::new(r"([0-9a-f]{40})  ((.+)wiki-([0-9]{8})-linktarget.sql.gz)")?,
         )
-        .ok_or(anyhow!("missing linktarget dump in sums file"))?;
+        .context("missing linktarget dump in sums file")?;
 
         Ok(ExternalTableDumpFiles {
             page,
@@ -111,13 +111,13 @@ impl TableDumpFiles {
         dumps_dir: &Path,
         files: ExternalTableDumpFiles,
     ) -> Result<Self> {
-        log::info!("downloading dump files...");
+        log::info!("downloading dump files");
         let page = Self::download_external_file(dumps_dir, &files.page).await?;
         let redirect = Self::download_external_file(dumps_dir, &files.redirect).await?;
         let pagelinks = Self::download_external_file(dumps_dir, &files.pagelinks).await?;
         let linktarget = Self::download_external_file(dumps_dir, &files.linktarget).await?;
 
-        log::info!("checking dump file hashes...");
+        log::info!("checking dump file hashes");
         check_file_hash(&page, &files.page.hash)?;
         check_file_hash(&redirect, &files.redirect.hash)?;
         check_file_hash(&pagelinks, &files.pagelinks.hash)?;
@@ -158,7 +158,7 @@ impl TableDumpFiles {
             .headers()
             .get(reqwest::header::CONTENT_LENGTH)
             .and_then(|h| h.to_str().ok().and_then(|s| s.parse().ok()))
-            .ok_or(anyhow!("missing Content-Length header at '{}'", url))?;
+            .context(format!("missing Content-Length header at '{url}'"))?;
 
         if existing_bytes < total_bytes {
             let mut resp = client

@@ -20,7 +20,7 @@ use std::{
 };
 use tokio::{net::TcpListener, task::JoinHandle};
 use tower_http::{set_header::SetResponseHeaderLayer, timeout::TimeoutLayer};
-use wp::{Database, Metadata, PageId};
+use wp::{Database, Metadata, Mode, PageId};
 
 #[derive(RustEmbed)]
 #[folder = "web/dist/"]
@@ -65,7 +65,7 @@ async fn shortest_paths_handler(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "unexpected database error",
                 );
-                log::error!("failed getting shortest paths: {e}...");
+                log::error!("failed getting shortest paths: {e}");
                 response.into_response()
             }
         }
@@ -116,7 +116,7 @@ pub async fn serve(databases_dir: &Path, listening_port: u16) -> Result<()> {
         .fallback(frontend_asset_handler)
         .layer(TimeoutLayer::new(Duration::from_secs(10)));
 
-    log::info!("listening on http://localhost:{listening_port}...");
+    log::info!("listening on http://localhost:{listening_port}");
     let listener = TcpListener::bind(format!(":::{listening_port}")).await?;
     let listener_handle: JoinHandle<Result<()>> = tokio::spawn(async move {
         axum::serve(listener, router).await?;
@@ -128,27 +128,23 @@ pub async fn serve(databases_dir: &Path, listening_port: u16) -> Result<()> {
         for entry in fs::read_dir(databases_dir)? {
             let path = entry?.path();
 
-            log::info!("opening database '{}'...", path.display());
-            match Database::open(&path) {
-                Ok(database) => {
-                    if database.is_tmp {
-                        log::warn!(
-                            "skipping database '{}': database is temporary",
-                            path.display()
-                        );
-                    } else {
-                        databases
-                            .write()
-                            .unwrap()
-                            .insert(database.metadata.clone(), database);
-                        log::info!("finished opening database '{}'...", path.display());
+            let mode = Mode::Serve;
+            match Database::get_metadata(&path, &mode) {
+                Ok(metadata) => match Database::open(&path, mode) {
+                    Ok(database) => {
+                        databases.write().unwrap().insert(metadata, database);
+                        log::info!("opened database '{}'", path.display());
                     }
-                }
-                Err(err) => {
-                    log::warn!("skipping database '{}': {}", path.display(), err);
+                    Err(e) => {
+                        log::warn!("skipping database '{}': {}", path.display(), e);
+                    }
+                },
+                Err(e) => {
+                    log::debug!("silently skipping database '{}': {}", path.display(), e);
                 }
             }
         }
+        log::info!("loaded all valid databases");
         Ok(())
     });
 

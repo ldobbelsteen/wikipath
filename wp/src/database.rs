@@ -1,87 +1,10 @@
-#![allow(clippy::ptr_arg)]
-
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use heed::types::SerdeBincode;
-use heed::EnvOpenOptions;
+use heed::{EnvFlags, EnvOpenOptions, PutFlags, RoTxn};
 use regex::Regex;
 use serde::Serialize;
+use std::collections::HashMap;
 use std::path::Path;
-use std::vec;
-
-/// A struct containing metadata about a database. The language code represents
-/// the Wikipedia language, and the date code represents the dump date.
-#[derive(Debug, Serialize, Clone, PartialEq, Eq, Hash)]
-#[serde(rename_all = "camelCase")]
-pub struct Metadata {
-    pub language_code: String,
-    pub date_code: String,
-}
-
-impl Metadata {
-    /// Extract metadata from the name of a database. Also returns whether the name is temporary.
-    fn from_name(s: &str) -> Result<(Self, bool)> {
-        let re = Regex::new(r"wp-([a-zA-Z]+)-([0-9]+)(-tmp)?")?;
-        if let Some(caps) = re.captures(s) {
-            if let Some(language_code) = caps.get(1) {
-                if let Some(date_code) = caps.get(2) {
-                    let is_tmp = caps.get(3).is_some();
-                    return Ok((
-                        Metadata {
-                            language_code: language_code.as_str().into(),
-                            date_code: date_code.as_str().into(),
-                        },
-                        is_tmp,
-                    ));
-                }
-            }
-        }
-        Err(anyhow!("database name '{}' is not valid", s))
-    }
-
-    /// Create name containing all database metadata.
-    pub fn to_name(&self) -> String {
-        format!("wp-{}-{}", self.language_code, self.date_code)
-    }
-
-    /// Create temp name containing all database metadata.
-    pub fn to_tmp_name(&self) -> String {
-        format!("wp-{}-{}-tmp", self.language_code, self.date_code)
-    }
-}
-
-/// Instance of a database environment.
-#[derive(Debug)]
-pub struct Database {
-    env: heed::Env,
-    pub metadata: Metadata,
-    pub is_tmp: bool,
-}
-
-impl Database {
-    /// Open a database environment in a directory. If the database directory does not yet exist,
-    /// it will be created. Returns an error if the database name in the path is not correctly formatted.
-    pub fn open(path: &Path) -> Result<Self> {
-        let filename = path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .ok_or(anyhow!("database path '{}' is not valid", path.display()))?;
-        let (metadata, is_tmp) = Metadata::from_name(filename)?;
-
-        std::fs::create_dir_all(path)?;
-        let env = unsafe {
-            EnvOpenOptions::new()
-                .max_dbs(3) // incoming, outgoing, redirects
-                .map_size(64 * 1024 * 1024 * 1024) // 64GB as max database size
-                .open(path)?
-        };
-
-        Ok(Self {
-            env,
-            metadata,
-            is_tmp,
-        })
-    }
-}
 
 /// Representation of a page id. The database schema uses 10-digit unsigned integers (<https://www.mediawiki.org/wiki/Manual:Pagelinks_table>).
 /// A u32 cannot represent all values a 10-digit integer can, but since not that many Wikipedia articles exist for any language, this should
@@ -93,131 +16,259 @@ pub type PageId = u32;
 /// be sufficient and saves memory and disk space.
 pub type LinkTargetId = u64;
 
-/// Schemas for the incoming, outgoing, and redirects databases/tables. The key is the page id, and the value is a list of page ids.
-/// The incoming table represents the list of pages that link to a given page, the outgoing table represents the list of pages that a given page links to,
-/// and the redirects table represents the mapping of redirecting pages to their target pages.
-type HeedIncoming = heed::Database<SerdeBincode<PageId>, SerdeBincode<Vec<PageId>>>;
-type HeedOutgoing = heed::Database<SerdeBincode<PageId>, SerdeBincode<Vec<PageId>>>;
-type HeedRedirects = heed::Database<SerdeBincode<PageId>, SerdeBincode<PageId>>;
-
-/// A read-only transaction on a database that wraps around an underlying Heed transaction.
-/// It provides methods to query incoming and outgoing links and redirects.
-pub struct ReadTransaction<'db> {
-    inner: heed::RoTxn<'db>,
-    incoming: HeedIncoming,
-    outgoing: HeedOutgoing,
-    redirects: HeedRedirects,
+/// A struct containing metadata about a database. The language code represents
+/// the Wikipedia language, and the date code represents the dump date.
+#[derive(Debug, Serialize, Clone, PartialEq, Eq, Hash)]
+#[serde(rename_all = "camelCase")]
+pub struct Metadata {
+    pub language_code: String,
+    pub date_code: String,
 }
 
-impl<'db> ReadTransaction<'db> {
-    pub fn begin(db: &'db Database) -> Result<Self> {
-        let inner = db.env.read_txn()?;
-        let incoming = db
-            .env
-            .open_database(&inner, Some("incoming"))?
-            .ok_or(anyhow!(
-                "database '{}' missing incoming data",
-                db.metadata.to_name()
-            ))?;
-        let outgoing = db
-            .env
-            .open_database(&inner, Some("outgoing"))?
-            .ok_or(anyhow!(
-                "database '{}' missing outgoing data",
-                db.metadata.to_name()
-            ))?;
-        let redirects = db
-            .env
-            .open_database(&inner, Some("redirects"))?
-            .ok_or(anyhow!(
-                "database '{}' missing redirects data",
-                db.metadata.to_name()
-            ))?;
+impl Metadata {
+    /// Extract metadata from the name of a database.
+    fn from_name(s: &str) -> Result<Self> {
+        let re = Regex::new(r"^wp-([a-zA-Z]+)-([0-9]+)$")?;
+        if let Some(caps) = re.captures(s) {
+            if let Some(language_code) = caps.get(1) {
+                if let Some(date_code) = caps.get(2) {
+                    return Ok(Metadata {
+                        language_code: language_code.as_str().into(),
+                        date_code: date_code.as_str().into(),
+                    });
+                }
+            }
+        }
+        Err(anyhow!("database name '{}' is not valid", s))
+    }
+
+    /// Create name containing all database metadata.
+    #[must_use]
+    pub fn to_name(&self) -> String {
+        format!("wp-{}-{}", self.language_code, self.date_code)
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum Mode {
+    Serve,
+    Build,
+}
+
+#[derive(Debug)]
+pub struct Database {
+    pub metadata: Metadata,
+    mode: Mode,
+    env: heed::Env,
+    tables: Tables,
+}
+
+#[derive(Debug)]
+struct Tables {
+    redirects: heed::Database<SerdeBincode<PageId>, SerdeBincode<PageId>>,
+    incoming: heed::Database<SerdeBincode<PageId>, SerdeBincode<Vec<PageId>>>,
+    outgoing: heed::Database<SerdeBincode<PageId>, SerdeBincode<Vec<PageId>>>,
+}
+
+impl Database {
+    /// Open a database at a path. Returns an error if the database name in the path is not correctly formatted.
+    pub fn open(path: &Path, mode: Mode) -> Result<Self> {
+        let metadata = Self::get_metadata(path, &mode)?;
+
+        let env = unsafe {
+            EnvOpenOptions::new()
+                .max_dbs(3) // redirects, incoming, outgoing
+                .map_size(32 * 1024 * 1024 * 1024) // max total database size
+                .flags(match mode {
+                    Mode::Serve => EnvFlags::NO_SUB_DIR | EnvFlags::READ_ONLY,
+                    Mode::Build => EnvFlags::empty(),
+                })
+                .open(path)?
+        };
+
+        let tables = match mode {
+            Mode::Build => {
+                let mut txn = env.write_txn()?;
+                let redirects = env.create_database(&mut txn, Some("redirects"))?;
+                let incoming = env.create_database(&mut txn, Some("incoming"))?;
+                let outgoing = env.create_database(&mut txn, Some("outgoing"))?;
+                txn.commit()?;
+                Tables {
+                    redirects,
+                    incoming,
+                    outgoing,
+                }
+            }
+            Mode::Serve => {
+                let txn = env.read_txn()?;
+                let redirects = env
+                    .open_database(&txn, Some("redirects"))?
+                    .context("serve database is missing redirects table")?;
+                let incoming = env
+                    .open_database(&txn, Some("incoming"))?
+                    .context("serve database is missing incoming table")?;
+                let outgoing = env
+                    .open_database(&txn, Some("outgoing"))?
+                    .context("serve database is missing outgoing table")?;
+                txn.commit()?;
+                Tables {
+                    redirects,
+                    incoming,
+                    outgoing,
+                }
+            }
+        };
 
         Ok(Self {
-            inner,
-            incoming,
-            outgoing,
-            redirects,
+            metadata,
+            mode,
+            env,
+            tables,
         })
     }
 
-    pub fn incoming_links(&self, target: PageId) -> Result<Vec<PageId>> {
-        Ok(self.incoming.get(&self.inner, &target)?.unwrap_or(vec![]))
+    pub fn get_metadata(path: &Path, mode: &Mode) -> Result<Metadata> {
+        match mode {
+            Mode::Serve => {
+                if !path.is_file() {
+                    return Err(anyhow!(
+                        "serve database path '{}' is not a file",
+                        path.display()
+                    ));
+                }
+            }
+            Mode::Build => {
+                if !path.is_dir() {
+                    return Err(anyhow!(
+                        "build database path '{}' is not a directory",
+                        path.display()
+                    ));
+                }
+            }
+        }
+
+        let filename = path.file_name().and_then(|s| s.to_str()).context(format!(
+            "database filename in path '{}' is not valid",
+            path.display()
+        ))?;
+
+        let metadata = Metadata::from_name(filename)?;
+        Ok(metadata)
     }
 
-    pub fn outgoing_links(&self, source: PageId) -> Result<Vec<PageId>> {
-        Ok(self.outgoing.get(&self.inner, &source)?.unwrap_or(vec![]))
+    /// Create a read transaction on the database. Do not forget to commit the transaction.
+    pub fn read_txn(&self) -> Result<heed::RoTxn<'_>> {
+        let txn = self.env.read_txn()?;
+        Ok(txn)
     }
 
-    pub fn redirect(&self, page: PageId) -> Result<Option<PageId>> {
-        Ok(self.redirects.get(&self.inner, &page)?)
+    /// Create a write transaction on the database. Do not forget to commit the transaction.
+    pub fn write_txn(&self) -> Result<heed::RwTxn<'_>> {
+        let txn = self.env.write_txn()?;
+        Ok(txn)
     }
-}
 
-/// A write transaction on a database that wraps around an underlying Heed transaction.
-/// It provides methods to insert incoming and outgoing links and redirects.
-/// The transaction is not committed until the `commit` method is called.
-pub struct WriteTransaction<'db> {
-    inner: heed::RwTxn<'db>,
-    incoming: HeedIncoming,
-    outgoing: HeedOutgoing,
-    redirects: HeedRedirects,
-}
+    /// Get the redirect of a page.
+    pub fn get_redirect(&self, txn: &RoTxn<'_>, page: PageId) -> Result<Option<PageId>> {
+        Ok(self.tables.redirects.get(txn, &page)?)
+    }
 
-impl<'db> WriteTransaction<'db> {
-    pub fn begin(db: &'db Database) -> Result<Self> {
-        let mut inner = db.env.write_txn()?;
-        let incoming = db.env.create_database(&mut inner, Some("incoming"))?;
-        let outgoing = db.env.create_database(&mut inner, Some("outgoing"))?;
-        let redirects = db.env.create_database(&mut inner, Some("redirects"))?;
+    /// Get the incoming links of a page.
+    pub fn get_incoming_links(&self, txn: &RoTxn<'_>, target: PageId) -> Result<Vec<PageId>> {
+        Ok(self
+            .tables
+            .incoming
+            .get(txn, &target)?
+            .unwrap_or(Vec::new()))
+    }
 
-        Ok(Self {
-            inner,
-            incoming,
-            outgoing,
-            redirects,
-        })
+    /// Get the outgoing links of a page.
+    pub fn get_outgoing_links(&self, txn: &RoTxn<'_>, source: PageId) -> Result<Vec<PageId>> {
+        Ok(self
+            .tables
+            .outgoing
+            .get(txn, &source)?
+            .unwrap_or(Vec::new()))
     }
 
     /// Insert a redirect into the database. Returns an error if the source page already has a redirect.
-    pub fn insert_redirect(&mut self, source: &PageId, target: &PageId) -> Result<()> {
-        if self
+    pub fn insert_redirect(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        source: PageId,
+        target: PageId,
+    ) -> Result<()> {
+        self.tables
             .redirects
-            .get_or_put(&mut self.inner, source, target)?
-            .is_some()
-        {
-            return Err(anyhow!("redirect source already in the database"));
-        }
+            .put_with_flags(txn, PutFlags::NO_OVERWRITE, &source, &target)?;
         Ok(())
     }
 
-    /// Insert incoming links into the database. Returns an error if the target page already has incoming links.
-    pub fn insert_incoming(&mut self, target: &PageId, sources: &Vec<PageId>) -> Result<()> {
-        if self
-            .incoming
-            .get_or_put(&mut self.inner, target, sources)?
-            .is_some()
-        {
-            return Err(anyhow!("incoming target already in the database"));
+    /// Insert links into the database in the form of incoming links. If the target page already has
+    /// incoming links, the new links are added to its entry. Returns whether any previous links were
+    /// present already (which makes the insert operation relatively expensive).
+    pub fn insert_links_incoming(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        target: PageId,
+        mut sources: Vec<PageId>,
+    ) -> Result<bool> {
+        sources.sort_unstable();
+        sources.dedup();
+        match self.tables.incoming.get_or_put(txn, &target, &sources)? {
+            Some(mut existing) => {
+                existing.extend(sources);
+                existing.sort_unstable();
+                existing.dedup();
+                self.tables.incoming.put(txn, &target, &existing)?;
+                Ok(true)
+            }
+            None => Ok(false),
         }
+    }
+
+    /// Generate the outgoing links table. Since it is only possible to insert links in the incoming
+    /// form, this function must be called after all links have been inserted to ensure the outgoing
+    /// table is also populated. Any previous values in the outgoing table are removed.
+    pub fn generate_outgoing_table(&self, txn: &mut heed::RwTxn<'_>) -> Result<()> {
+        if self.mode != Mode::Build {
+            return Err(anyhow!(
+                "generating outgoing table is only allowed in build mode"
+            ));
+        }
+
+        self.tables.outgoing.clear(txn)?;
+
+        log::debug!("building outgoing table entries");
+        let mut outgoing: HashMap<PageId, Vec<PageId>> = HashMap::new();
+        for entry in self.tables.incoming.iter(txn)? {
+            let (target, sources) = entry?;
+            for source in sources {
+                outgoing.entry(source).or_default().push(target);
+            }
+        }
+
+        log::debug!("inserting outgoing table entries");
+        for (source, mut targets) in outgoing {
+            targets.sort_unstable();
+            targets.dedup();
+            self.tables.outgoing.put(txn, &source, &targets)?;
+        }
+
         Ok(())
     }
 
-    /// Insert outgoing links into the database. Returns an error if the source page already has outgoing links.
-    pub fn insert_outgoing(&mut self, source: &PageId, targets: &Vec<PageId>) -> Result<usize> {
-        if self
-            .outgoing
-            .get_or_put(&mut self.inner, source, targets)?
-            .is_some()
-        {
-            return Err(anyhow!("outgoing source already in the database"));
-        }
-        Ok(targets.len())
-    }
+    /// Finish the database by copying it to a file, converting it to a serve database. The database
+    /// is compacted in the process. Only works if the current database is a build database. The build
+    /// database directory is removed at the end.
+    pub fn copy_to_serve(self, path: &Path) -> Result<()> {
+        self.env
+            .copy_to_file(path, heed::CompactionOption::Enabled)?;
 
-    pub fn commit(self) -> Result<()> {
-        self.inner.commit()?;
+        let build_path = self.env.path().to_path_buf();
+        drop(self);
+        std::fs::remove_dir_all(build_path)?;
+
         Ok(())
     }
 }

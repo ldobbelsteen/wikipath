@@ -1,4 +1,4 @@
-use crate::database::{Database, PageId, ReadTransaction};
+use crate::database::{Database, PageId};
 use anyhow::Result;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -18,17 +18,17 @@ pub struct Paths<'a> {
 }
 
 impl Database {
-    #[allow(clippy::too_many_lines)]
     /// Get the shortest paths between two pages.
+    #[allow(clippy::too_many_lines)]
     pub fn get_shortest_paths(&self, source: PageId, target: PageId) -> Result<Paths> {
-        let txn = ReadTransaction::begin(self)?;
+        let txn = self.read_txn()?;
 
         // Follow any redirects and report whether they were redirects.
-        let (source, source_is_redirect) = txn
-            .redirect(source)?
+        let (source, source_is_redirect) = self
+            .get_redirect(&txn, source)?
             .map_or((source, false), |new_source| (new_source, true));
-        let (target, target_is_redirect) = txn
-            .redirect(target)?
+        let (target, target_is_redirect) = self
+            .get_redirect(&txn, target)?
             .map_or((target, false), |new_target| (new_target, true));
 
         // We run BFS in both directions, so we store two queues.
@@ -43,6 +43,7 @@ impl Database {
             HashMap::from([(target, HashSet::new())]);
 
         // The overlap between the currently visited pages in the forward and backward directions.
+        // If there is overlap, it means we have found the shortest path(s).
         let mut overlapping: HashSet<PageId> = HashSet::new();
 
         // Keep track of the depth of the BFS of both directions.
@@ -60,21 +61,31 @@ impl Database {
 
             // Take the direction that has the shortest queue (for efficiency).
             if forward_queue.len() < backward_queue.len() {
+                // We pop the front of the queue as many times as the queue is long. The queue may grow
+                // during the loop, but we only consider the pages that were in the queue at the start.
                 for _ in 0..forward_queue.len() {
-                    let page = forward_queue.pop_front().unwrap(); // forward queue cannot be empty by the while-loop guard
-                    for out in txn.outgoing_links(page)? {
+                    // Forward queue cannot be empty by the while-loop guard.
+                    let source = forward_queue.pop_front().unwrap();
+
+                    // Consider all outgoing links of the source page.
+                    for target in self.get_outgoing_links(&txn, source)? {
                         // Only consider if it has not been visited yet.
-                        if !forward_predecessors.contains_key(&out) {
-                            forward_queue.push_back(out);
-                            new_predecessors.entry(out).or_default().insert(page);
-                            if backward_predecessors.contains_key(&out) {
-                                overlapping.insert(out);
+                        if !forward_predecessors.contains_key(&target) {
+                            forward_queue.push_back(target);
+
+                            // Mark the target as a predecessor of the source.
+                            new_predecessors.entry(target).or_default().insert(source);
+
+                            // If the target has been visited by the backward BFS, we have found overlap.
+                            if backward_predecessors.contains_key(&target) {
+                                overlapping.insert(target);
                             }
                         }
                     }
                 }
 
-                // Insert newly found predecessors into the predecessors map.
+                // Insert newly found predecessors into the predecessors map. This is done after
+                // the loop, because we only want to mark them as visited after this iteration.
                 for (child, predecessors) in new_predecessors {
                     for predecessor in predecessors {
                         forward_predecessors
@@ -87,21 +98,31 @@ impl Database {
                 // Increment search depth.
                 forward_depth += 1;
             } else {
+                // We pop the front of the queue as many times as the queue is long. The queue may grow
+                // during the loop, but we only consider the pages that were in the queue at the start.
                 for _ in 0..backward_queue.len() {
-                    let page = backward_queue.pop_front().unwrap(); // backward queue cannot be empty by the while-loop guard
-                    for inc in txn.incoming_links(page)? {
+                    // Backward queue cannot be empty by the while-loop guard.
+                    let target = backward_queue.pop_front().unwrap();
+
+                    // Consider all incoming links of the target page.
+                    for source in self.get_incoming_links(&txn, target)? {
                         // Only consider if it has not been visited yet.
-                        if !backward_predecessors.contains_key(&inc) {
-                            backward_queue.push_back(inc);
-                            new_predecessors.entry(inc).or_default().insert(page);
-                            if forward_predecessors.contains_key(&inc) {
-                                overlapping.insert(inc);
+                        if !backward_predecessors.contains_key(&source) {
+                            backward_queue.push_back(source);
+
+                            // Mark the source as a predecessor of the target.
+                            new_predecessors.entry(source).or_default().insert(target);
+
+                            // If the source has been visited by the forward BFS, we have found overlap.
+                            if forward_predecessors.contains_key(&source) {
+                                overlapping.insert(source);
                             }
                         }
                     }
                 }
 
-                // Insert newly found predecessors into the predecessors map.
+                // Insert newly found predecessors into the predecessors map. This is done after
+                // the loop, because we only want to mark them as visited after this iteration.
                 for (child, predecessors) in new_predecessors {
                     for predecessor in predecessors {
                         backward_predecessors
@@ -115,6 +136,9 @@ impl Database {
                 backward_depth += 1;
             }
         }
+
+        // Release the read transaction.
+        txn.commit()?;
 
         // Extract the number of paths and links from the predecessor maps.
         let mut links: HashMap<PageId, HashSet<PageId>> = HashMap::new();
