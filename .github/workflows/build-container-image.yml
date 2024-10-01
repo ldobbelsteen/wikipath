@@ -1,20 +1,23 @@
-name: CI
+name: Build container image
 on: push
 
 jobs:
-  build-image:
-    name: Build container image
+  build:
+    name: Build and push image
     runs-on: ubuntu-latest
+
     env:
       IMAGE_NAME: wikipath
       REGISTRY: ghcr.io/ldobbelsteen
+
     permissions:
       contents: read
       packages: write
+
     steps:
       - name: Clone the repository
         id: repository-checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
       - name: Build image
         id: image-build
@@ -34,7 +37,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Push image to registry
-        if : ${{ github.ref == 'refs/heads/main' }}
+        if: ${{ github.ref == 'refs/heads/main' }}
         id: image-push
         uses: redhat-actions/push-to-registry@v2
         with:

@@ -39,7 +39,7 @@ docker run -d \
     --name wikipath \
     --restart always \
     --publish 1789:1789 \
-    --volume /path/to/db/directory:/databases \
+    --volume /path/to/db/directory:/databases:ro \
     ghcr.io/ldobbelsteen/wikipath
 ```
 

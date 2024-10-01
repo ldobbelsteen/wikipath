@@ -1,3 +1,4 @@
+use crate::database::{Database, Metadata, Mode, PageId};
 use anyhow::Result;
 use axum::{
     extract::{Extension, Query},
@@ -20,7 +21,6 @@ use std::{
 };
 use tokio::{net::TcpListener, task::JoinHandle};
 use tower_http::{set_header::SetResponseHeaderLayer, timeout::TimeoutLayer};
-use wp::{Database, Metadata, PageId};
 
 #[derive(RustEmbed)]
 #[folder = "web/dist/"]
@@ -65,7 +65,7 @@ async fn shortest_paths_handler(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "unexpected database error",
                 );
-                log::error!("failed getting shortest paths: {e}...");
+                log::error!("failed getting shortest paths: {e}");
                 response.into_response()
             }
         }
@@ -96,31 +96,6 @@ async fn frontend_asset_handler(uri: Uri) -> Response {
 pub async fn serve(databases_dir: &Path, listening_port: u16) -> Result<()> {
     let databases: Databases = Arc::new(RwLock::new(HashMap::new()));
 
-    let databases_clone = databases.clone();
-    let databases_dir_clone = databases_dir.to_path_buf();
-    let loader_handle: JoinHandle<Result<()>> = tokio::spawn(async move {
-        for entry in fs::read_dir(databases_dir_clone)? {
-            let path = entry?.path();
-            if let Some(ext) = path.extension() {
-                if ext == "redb" {
-                    match Database::open(&path) {
-                        Ok(database) => {
-                            databases_clone
-                                .write()
-                                .unwrap()
-                                .insert(database.metadata.clone(), database);
-                            log::info!("finished opening database '{}'...", path.display());
-                        }
-                        Err(err) => {
-                            log::warn!("skipping database '{}': {}", path.display(), err);
-                        }
-                    }
-                }
-            }
-        }
-        Ok(())
-    });
-
     let router = Router::new()
         .route("/api/list_databases", get(list_databases_handler))
         .route(
@@ -130,7 +105,7 @@ pub async fn serve(databases_dir: &Path, listening_port: u16) -> Result<()> {
                 HeaderValue::from_str("max-age=3600")?, // cached for an hour
             )),
         )
-        .layer(Extension(databases))
+        .layer(Extension(databases.clone()))
         .route(
             "/assets/*f",
             get(frontend_asset_handler).layer(SetResponseHeaderLayer::overriding(
@@ -141,15 +116,39 @@ pub async fn serve(databases_dir: &Path, listening_port: u16) -> Result<()> {
         .fallback(frontend_asset_handler)
         .layer(TimeoutLayer::new(Duration::from_secs(10)));
 
+    log::info!("listening on http://localhost:{listening_port}");
     let listener = TcpListener::bind(format!(":::{listening_port}")).await?;
     let listener_handle: JoinHandle<Result<()>> = tokio::spawn(async move {
         axum::serve(listener, router).await?;
         Ok(())
     });
 
-    log::info!("listening on http://localhost:{listening_port}...");
+    let databases_dir = databases_dir.to_path_buf();
+    let loader_handle: JoinHandle<Result<()>> = tokio::spawn(async move {
+        for entry in fs::read_dir(databases_dir)? {
+            let path = entry?.path();
 
-    // Wait for the loader and listener and return the first error that may occur.
+            let mode = Mode::Serve;
+            match Database::get_metadata(&path, &mode) {
+                Ok(metadata) => match Database::open(&path, mode) {
+                    Ok(database) => {
+                        databases.write().unwrap().insert(metadata, database);
+                        log::info!("opened database '{}'", path.display());
+                    }
+                    Err(e) => {
+                        log::warn!("skipping database '{}': {}", path.display(), e);
+                    }
+                },
+                Err(e) => {
+                    log::debug!("silently skipping database '{}': {}", path.display(), e);
+                }
+            }
+        }
+        log::info!("loaded all valid databases");
+        Ok(())
+    });
+
+    // Return the first error that may occur between the loader and listener.
     match tokio::try_join!(loader_handle, listener_handle)? {
         (Err(err), _) | (_, Err(err)) => Err(err),
         (Ok(()), Ok(())) => Ok(()),

@@ -2,10 +2,20 @@
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use std::path::{Path, PathBuf};
+use database::{Database, Metadata};
+use dump::TableDumpFiles;
+use humantime::format_duration;
+use std::{
+    path::{Path, PathBuf},
+    time::Instant,
+};
 use tokio::signal;
 
 mod build;
+mod database;
+mod dump;
+mod parse;
+mod search;
 mod serve;
 
 #[derive(Parser)]
@@ -33,9 +43,6 @@ enum Action {
         /// Number of threads to use while parsing. Uses all by default.
         #[clap(long)]
         threads: Option<usize>,
-        /// Maximum number of gigabytes (GB) of memory that can be used (higher values prevent the buffer having to be flushed prematurely and in turn improve performance).
-        #[clap(long, default_value = "12")]
-        memory: u64,
     },
     /// Serve Wikipath database(s).
     Serve {
@@ -62,48 +69,64 @@ async fn main() -> Result<()> {
         signal::ctrl_c().await.expect("failed to listen for ctrl-c");
     };
 
-    tokio::select! {
-        res = ctrl_c => {
-            log::info!("ctrl-c received, exiting...");
-            Ok(res)
-        },
-        res = async {
-            match args.action {
-                Action::Build {
-                    languages,
-                    date,
-                    databases,
-                    dumps,
-                    threads,
-                    memory,
-                } => {
-                    let databases_dir = Path::new(&databases);
-                    std::fs::create_dir_all(databases_dir)?;
-
-                    let dumps_dir = dumps.map_or(std::env::temp_dir().join("wikipath"), PathBuf::from);
-                    std::fs::create_dir_all(&dumps_dir)?;
-
-                    let thread_count = threads.unwrap_or_else(num_cpus::get);
-                    let memory_limit = memory * 1024 * 1024 * 1024;
-                    for language_code in languages.split(',') {
-                        build::build(
-                            language_code,
-                            &date,
-                            databases_dir,
-                            &dumps_dir,
-                            thread_count,
-                            memory_limit,
-                        )
-                        .await?;
-                    }
-
+    match args.action {
+        Action::Serve { databases, port } => {
+            let databases_dir = Path::new(&databases);
+            tokio::select! {
+                res = serve::serve(databases_dir, port) => res,
+                () = ctrl_c => {
+                    log::info!("ctrl-c received, exiting");
                     Ok(())
-                }
-                Action::Serve { databases, port } => {
-                    let databases_dir = Path::new(&databases);
-                    serve::serve(databases_dir, port).await
-                }
+                },
             }
-        } => res,
+        }
+        Action::Build {
+            languages,
+            date,
+            databases,
+            dumps,
+            threads,
+        } => {
+            let date_code = date;
+            let databases_dir = Path::new(&databases);
+            let dumps_dir = dumps.map_or(std::env::temp_dir().join("wikipath"), PathBuf::from);
+            let thread_count = threads.unwrap_or_else(num_cpus::get);
+
+            for language_code in languages.split(',') {
+                log::info!("building '{}' database", language_code);
+                let metadata = Metadata {
+                    language_code: language_code.into(),
+                    date_code: date_code.clone(),
+                };
+
+                let tmp_path = databases_dir.join("build").join(metadata.to_name());
+                if Path::new(&tmp_path).exists() {
+                    log::warn!("temporary database from previous build found, removing");
+                    std::fs::remove_dir_all(&tmp_path)?;
+                }
+
+                let final_path = databases_dir.join(metadata.to_name());
+                if Path::new(&final_path).exists() {
+                    log::warn!("database already exists, skipping");
+                    continue;
+                }
+
+                log::info!("getting dump information");
+                let external_dump_files =
+                    TableDumpFiles::get_external(language_code, &date_code).await?;
+
+                let start = Instant::now();
+                let dump_files =
+                    TableDumpFiles::download_external(&dumps_dir, external_dump_files).await?;
+                log::info!(
+                    "dump files downloaded in {}!",
+                    format_duration(start.elapsed())
+                );
+
+                Database::build(&metadata, &dump_files, &tmp_path, &final_path, thread_count)?;
+            }
+
+            Ok(())
+        }
     }
 }
