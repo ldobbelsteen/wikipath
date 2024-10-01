@@ -34,7 +34,11 @@ fn not_found() -> Response {
 
 async fn list_databases_handler(Extension(databases): Extension<Databases>) -> Response {
     let guard = databases.read().unwrap();
-    let list = guard.values().map(|db| &db.metadata).collect::<Vec<_>>();
+    let mut list = guard.values().map(|db| &db.metadata).collect::<Vec<_>>();
+
+    // Sort alphabetically by language code.
+    list.sort_by(|a, b| a.language_code.cmp(&b.language_code));
+
     Json(list).into_response()
 }
 
