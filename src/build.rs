@@ -6,55 +6,31 @@ use crate::{
 use anyhow::{anyhow, Result};
 use humantime::format_duration;
 use std::{
-    path::{Path, PathBuf},
+    path::Path,
     sync::{Arc, Mutex},
     time::Instant,
 };
 
 impl Database {
-    /// Build a database in a certain language. Outputs the database into the specified directory. Dump
-    /// files are downloaded into the specified directory to prevent re-downloading when re-building a
-    /// database. Uses the specified number of threads in total.
-    #[allow(clippy::too_many_lines)]
-    pub async fn build(
-        language_code: &str,
-        date_code: &str,
-        databases_dir: &Path,
-        dumps_dir: &Path,
+    /// Build a database in a certain language. Requires the database metadata and the downloaded
+    /// dump files. The database will be built in the specified temporary directory and then copied
+    /// to the final directory. Uses the specified number of threads in total.
+    pub fn build(
+        metadata: &Metadata,
+        dump_files: &TableDumpFiles,
+        tmp_path: &Path,
+        final_path: &Path,
         thread_count: usize,
-    ) -> Result<PathBuf> {
-        log::info!("building '{language_code}' database");
-        let overall_start = Instant::now();
-
-        log::info!("getting dump information");
-        let external = TableDumpFiles::get_external(language_code, date_code).await?;
-        let metadata = Metadata {
-            language_code: external.get_language_code(),
-            date_code: external.get_date_code(),
-        };
-
-        let tmp_path = databases_dir.join("build").join(metadata.to_name());
-        if Path::new(&tmp_path).exists() {
-            log::warn!("temporary database from previous build found, removing");
-            std::fs::remove_dir_all(&tmp_path)?;
-        }
-
-        let final_path = databases_dir.join(metadata.to_name());
-        if Path::new(&final_path).exists() {
-            log::warn!("database already exists, skipping");
-            return Ok(final_path);
-        }
-
-        let files = TableDumpFiles::download_external(dumps_dir, external).await?;
+    ) -> Result<()> {
+        let start = Instant::now();
 
         log::info!("creating new database");
-        std::fs::create_dir_all(&tmp_path)?;
-        let db = Database::open(&tmp_path, Mode::Build)?;
-        let build_start = Instant::now();
+        std::fs::create_dir_all(tmp_path)?;
+        let db = Database::open(tmp_path, Mode::Build)?;
 
         {
             log::info!("parsing page table dump");
-            let title_to_id = files.parse_page_table_dump(thread_count)?;
+            let title_to_id = dump_files.parse_page_table(thread_count)?;
             if title_to_id.is_empty() {
                 return Err(anyhow!(
                     "nothing parsed from page table, possibly caused by schema changes"
@@ -63,7 +39,7 @@ impl Database {
             log::info!("{} page titles found!", title_to_id.len());
 
             log::info!("parsing redirect table dump");
-            let redirects = files.parse_redirect_table_dump(&title_to_id, thread_count)?;
+            let redirects = dump_files.parse_redirect_table(&title_to_id, thread_count)?;
             if redirects.is_empty() {
                 return Err(anyhow!(
                     "nothing parsed from redirect table, possibly caused by schema changes"
@@ -84,7 +60,7 @@ impl Database {
 
             log::info!("parsing linktarget table dump");
             let linktarget_to_target =
-                files.parse_linktarget_table_dump(&title_to_id, thread_count)?;
+                dump_files.parse_linktarget_table(&title_to_id, thread_count)?;
             if linktarget_to_target.is_empty() {
                 return Err(anyhow!(
                     "nothing parsed from linktarget table, possibly caused by schema changes"
@@ -96,7 +72,7 @@ impl Database {
 
             log::info!("parsing pagelinks table dump & inserting links into database");
             let link_count = Arc::new(Mutex::new(0));
-            files.parse_pagelinks_table_dump(
+            dump_files.parse_pagelinks_table(
                 |batch| {
                     let mut txn = db.write_txn()?;
                     let size = batch.size();
@@ -140,15 +116,14 @@ impl Database {
         txn.commit()?;
 
         log::info!("copying database to final path");
-        db.copy_to_serve(&final_path)?;
+        db.copy_to_serve(final_path)?;
 
         log::info!(
-            "database '{}' succesfully built in {} (or {} without init and download time)!",
+            "database '{}' succesfully built in {}!",
             metadata.to_name(),
-            format_duration(overall_start.elapsed()),
-            format_duration(build_start.elapsed())
+            format_duration(start.elapsed())
         );
 
-        Ok(final_path)
+        Ok(())
     }
 }

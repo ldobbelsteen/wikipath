@@ -59,7 +59,7 @@ impl LinkBatchIncoming {
 
 impl TableDumpFiles {
     /// Parse the page table dump file and return a mapping from page titles to page ids.
-    pub fn parse_page_table_dump(&self, thread_count: usize) -> Result<HashMap<String, PageId>> {
+    pub fn parse_page_table(&self, thread_count: usize) -> Result<HashMap<String, PageId>> {
         let result = Arc::new(Mutex::new(HashMap::new()));
 
         // Helper closure to ingest a batch of page titles into the result. Empties the batch.
@@ -118,7 +118,7 @@ impl TableDumpFiles {
     }
 
     /// Parse the redirect table dump file and return a mapping from source page ids to target page ids.
-    pub fn parse_redirect_table_dump(
+    pub fn parse_redirect_table(
         &self,
         title_to_id: &HashMap<String, PageId>,
         thread_count: usize,
@@ -190,7 +190,7 @@ impl TableDumpFiles {
     }
 
     /// Parse the linktarget table dump file and return a mapping from link target ids to page ids.
-    pub fn parse_linktarget_table_dump(
+    pub fn parse_linktarget_table(
         &self,
         title_to_id: &HashMap<String, PageId>,
         thread_count: usize,
@@ -265,7 +265,7 @@ impl TableDumpFiles {
     ///
     /// The page ids in the lists are not strictly unique, as the parsing process may output the same
     /// link multiple times occasionally.
-    pub fn parse_pagelinks_table_dump<F>(
+    pub fn parse_pagelinks_table<F>(
         &self,
         output_link_batch: F,
         linktarget_to_target: &HashMap<LinkTargetId, PageId>,

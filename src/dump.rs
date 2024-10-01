@@ -35,18 +35,6 @@ pub struct ExternalTableDumpFiles {
     linktarget: ExternalFile,
 }
 
-impl ExternalTableDumpFiles {
-    /// Get the language code of the dump.
-    pub fn get_language_code(&self) -> String {
-        self.page.language_code.clone()
-    }
-
-    /// Get the date code of the dump.
-    pub fn get_date_code(&self) -> String {
-        self.page.date_code.clone()
-    }
-}
-
 impl TableDumpFiles {
     /// Get metadatas of the dump files from Wikimedia.
     pub async fn get_external(

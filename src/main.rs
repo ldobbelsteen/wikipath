@@ -2,7 +2,8 @@
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use database::Database;
+use database::{Database, Metadata};
+use dump::TableDumpFiles;
 use std::path::{Path, PathBuf};
 use tokio::signal;
 
@@ -64,42 +65,59 @@ async fn main() -> Result<()> {
         signal::ctrl_c().await.expect("failed to listen for ctrl-c");
     };
 
-    tokio::select! {
-        res = ctrl_c => {
-            log::info!("ctrl-c received, exiting");
-            Ok(res)
-        },
-        res = async {
-            match args.action {
-                Action::Build {
-                    languages,
-                    date,
-                    databases,
-                    dumps,
-                    threads,
-                } => {
-                    let databases_dir = Path::new(&databases);
-                    let dumps_dir = dumps.map_or(std::env::temp_dir().join("wikipath"), PathBuf::from);
-                    let thread_count = threads.unwrap_or_else(num_cpus::get);
-
-                    for language_code in languages.split(',') {
-                        Database::build(
-                            language_code,
-                            &date,
-                            databases_dir,
-                            &dumps_dir,
-                            thread_count
-                        )
-                        .await?;
-                    }
-
+    match args.action {
+        Action::Serve { databases, port } => {
+            let databases_dir = Path::new(&databases);
+            tokio::select! {
+                res = serve::serve(databases_dir, port) => res,
+                () = ctrl_c => {
+                    log::info!("ctrl-c received, exiting");
                     Ok(())
-                }
-                Action::Serve { databases, port } => {
-                    let databases_dir = Path::new(&databases);
-                    serve::serve(databases_dir, port).await
-                }
+                },
             }
-        } => res,
+        }
+        Action::Build {
+            languages,
+            date,
+            databases,
+            dumps,
+            threads,
+        } => {
+            let date_code = date;
+            let databases_dir = Path::new(&databases);
+            let dumps_dir = dumps.map_or(std::env::temp_dir().join("wikipath"), PathBuf::from);
+            let thread_count = threads.unwrap_or_else(num_cpus::get);
+
+            for language_code in languages.split(',') {
+                log::info!("building '{}' database", language_code);
+                let metadata = Metadata {
+                    language_code: language_code.into(),
+                    date_code: date_code.clone(),
+                };
+
+                let tmp_path = databases_dir.join("build").join(metadata.to_name());
+                if Path::new(&tmp_path).exists() {
+                    log::warn!("temporary database from previous build found, removing");
+                    std::fs::remove_dir_all(&tmp_path)?;
+                }
+
+                let final_path = databases_dir.join(metadata.to_name());
+                if Path::new(&final_path).exists() {
+                    log::warn!("database already exists, skipping");
+                    continue;
+                }
+
+                log::info!("getting dump information");
+                let external_dump_files =
+                    TableDumpFiles::get_external(language_code, &date_code).await?;
+
+                let dump_files =
+                    TableDumpFiles::download_external(&dumps_dir, external_dump_files).await?;
+
+                Database::build(&metadata, &dump_files, &tmp_path, &final_path, thread_count)?;
+            }
+
+            Ok(())
+        }
     }
 }
