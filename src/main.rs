@@ -4,7 +4,11 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use database::{Database, Metadata};
 use dump::TableDumpFiles;
-use std::path::{Path, PathBuf};
+use humantime::format_duration;
+use std::{
+    path::{Path, PathBuf},
+    time::Instant,
+};
 use tokio::signal;
 
 mod build;
@@ -111,8 +115,13 @@ async fn main() -> Result<()> {
                 let external_dump_files =
                     TableDumpFiles::get_external(language_code, &date_code).await?;
 
+                let start = Instant::now();
                 let dump_files =
                     TableDumpFiles::download_external(&dumps_dir, external_dump_files).await?;
+                log::info!(
+                    "dump files downloaded in {}!",
+                    format_duration(start.elapsed())
+                );
 
                 Database::build(&metadata, &dump_files, &tmp_path, &final_path, thread_count)?;
             }
