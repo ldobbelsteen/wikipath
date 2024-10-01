@@ -2,6 +2,7 @@
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use database::Database;
 use std::path::{Path, PathBuf};
 use tokio::signal;
 
@@ -82,7 +83,7 @@ async fn main() -> Result<()> {
                     let thread_count = threads.unwrap_or_else(num_cpus::get);
 
                     for language_code in languages.split(',') {
-                        build::build(
+                        Database::build(
                             language_code,
                             &date,
                             databases_dir,
