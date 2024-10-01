@@ -8,6 +8,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use crate::database::Metadata;
+
 /// Struct to hold paths to the local dump files.
 #[derive(Debug)]
 pub struct TableDumpFiles {
@@ -33,6 +35,15 @@ pub struct ExternalTableDumpFiles {
     redirect: ExternalFile,
     pagelinks: ExternalFile,
     linktarget: ExternalFile,
+}
+
+impl ExternalTableDumpFiles {
+    pub fn get_metadata(&self) -> Metadata {
+        Metadata {
+            language_code: self.page.language_code.clone(),
+            date_code: self.page.date_code.clone(),
+        }
+    }
 }
 
 impl TableDumpFiles {

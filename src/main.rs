@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use database::{Database, Metadata};
+use database::Database;
 use dump::TableDumpFiles;
 use humantime::format_duration;
 use std::{
@@ -94,10 +94,12 @@ async fn main() -> Result<()> {
 
             for language_code in languages.split(',') {
                 log::info!("building '{}' database", language_code);
-                let metadata = Metadata {
-                    language_code: language_code.into(),
-                    date_code: date_code.clone(),
-                };
+
+                log::info!("getting dump information");
+                let external_dump_files =
+                    TableDumpFiles::get_external(language_code, &date_code).await?;
+
+                let metadata = external_dump_files.get_metadata();
 
                 let tmp_path = databases_dir.join("build").join(metadata.to_name());
                 if Path::new(&tmp_path).exists() {
@@ -110,10 +112,6 @@ async fn main() -> Result<()> {
                     log::warn!("database already exists, skipping");
                     continue;
                 }
-
-                log::info!("getting dump information");
-                let external_dump_files =
-                    TableDumpFiles::get_external(language_code, &date_code).await?;
 
                 let start = Instant::now();
                 let dump_files =
