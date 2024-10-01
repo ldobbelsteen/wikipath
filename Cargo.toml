@@ -3,19 +3,23 @@ name = "wikipath"
 version = "0.3.0"
 edition = "2021"
 
-[workspace]
-
 [dependencies]
 anyhow = "1.0.88"
 axum = "0.7.5"
 clap = { version = "4.5.17", features = ["derive"] }
+crossbeam-channel = "0.5.13"
+data-encoding = "2.6.0"
 env_logger = "0.11.5"
+flate2 = "1.0.33"
+heed = "0.20.5"
 humantime = "2.1.0"
 log = "0.4.22"
 mime_guess = "2.0.5"
 num_cpus = "1.16.0"
+regex = "1.10.6"
+reqwest = { version = "0.12.7", features = ["stream"] }
+ring = "0.17.8"
 rust-embed = "8.5.0"
 serde = { version = "1.0.210", features = ["derive"] }
 tokio = { version = "1.40.0", features = ["full"] }
 tower-http = { version = "0.5.2", features = ["fs", "timeout", "set-header"] }
-wp = { path = "wp" }

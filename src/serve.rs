@@ -20,7 +20,8 @@ use std::{
 };
 use tokio::{net::TcpListener, task::JoinHandle};
 use tower_http::{set_header::SetResponseHeaderLayer, timeout::TimeoutLayer};
-use wp::{Database, Metadata, Mode, PageId};
+
+use crate::database::{Database, Metadata, Mode, PageId};
 
 #[derive(RustEmbed)]
 #[folder = "web/dist/"]

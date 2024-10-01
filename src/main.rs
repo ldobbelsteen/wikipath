@@ -6,6 +6,10 @@ use std::path::{Path, PathBuf};
 use tokio::signal;
 
 mod build;
+mod database;
+mod dump;
+mod parse;
+mod search;
 mod serve;
 
 #[derive(Parser)]

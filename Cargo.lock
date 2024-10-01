@@ -1953,16 +1953,22 @@ dependencies = [
  "anyhow",
  "axum",
  "clap",
+ "crossbeam-channel",
+ "data-encoding",
  "env_logger",
+ "flate2",
+ "heed",
  "humantime",
  "log",
  "mime_guess",
  "num_cpus",
+ "regex",
+ "reqwest",
+ "ring",
  "rust-embed",
  "serde",
  "tokio",
  "tower-http",
- "wp",
 ]
 
 [[package]]
@@ -2164,22 +2170,6 @@ name = "windows_x86_64_msvc"
 version = "0.52.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
-
-[[package]]
-name = "wp"
-version = "0.3.0"
-dependencies = [
- "anyhow",
- "crossbeam-channel",
- "data-encoding",
- "flate2",
- "heed",
- "log",
- "regex",
- "reqwest",
- "ring",
- "serde",
-]
 
 [[package]]
 name = "zeroize"

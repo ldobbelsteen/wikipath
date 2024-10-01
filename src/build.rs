@@ -5,7 +5,12 @@ use std::{
     sync::{Arc, Mutex},
     time::Instant,
 };
-use wp::{cleanup_redirects, Database, Metadata, Mode, TableDumpFiles};
+
+use crate::{
+    database::{Database, Metadata, Mode},
+    dump::TableDumpFiles,
+    parse::cleanup_redirects,
+};
 
 /// Build a database in a certain language. Outputs the database into the specified directory. Dump
 /// files are downloaded into the specified directory to prevent re-downloading when re-building a
