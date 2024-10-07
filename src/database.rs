@@ -3,7 +3,7 @@ use heed::types::SerdeBincode;
 use heed::{EnvFlags, EnvOpenOptions, PutFlags, RoTxn};
 use regex::Regex;
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::path::Path;
 
 /// Representation of a page id. The database schema uses 10-digit unsigned integers (<https://www.mediawiki.org/wiki/Manual:Pagelinks_table>).
@@ -240,7 +240,7 @@ impl Database {
         self.tables.outgoing.clear(txn)?;
 
         log::debug!("building outgoing table entries");
-        let mut outgoing: HashMap<PageId, Vec<PageId>> = HashMap::new();
+        let mut outgoing: BTreeMap<PageId, Vec<PageId>> = BTreeMap::new();
         for entry in self.tables.incoming.iter(txn)? {
             let (target, sources) = entry?;
             for source in sources {
