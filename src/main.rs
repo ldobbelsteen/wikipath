@@ -40,9 +40,6 @@ enum Action {
         /// Directory to download the dump files to. Uses the temporary directory by default.
         #[clap(long)]
         dumps: Option<String>,
-        /// Number of threads to use while parsing. Uses all by default.
-        #[clap(long)]
-        threads: Option<usize>,
     },
     /// Serve Wikipath database(s).
     Serve {
@@ -85,12 +82,10 @@ async fn main() -> Result<()> {
             date,
             databases,
             dumps,
-            threads,
         } => {
             let date_code = date;
             let databases_dir = Path::new(&databases);
             let dumps_dir = dumps.map_or(std::env::temp_dir().join("wikipath"), PathBuf::from);
-            let thread_count = threads.unwrap_or_else(num_cpus::get);
 
             for language_code in languages.split(',') {
                 log::info!("building '{}' database", language_code);
@@ -121,7 +116,7 @@ async fn main() -> Result<()> {
                     format_duration(start.elapsed())
                 );
 
-                Database::build(&metadata, &dump_files, &tmp_path, &final_path, thread_count)?;
+                Database::build(&metadata, &dump_files, &tmp_path, &final_path)?;
             }
 
             Ok(())
