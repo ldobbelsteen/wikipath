@@ -235,6 +235,10 @@ impl TableDumpFiles {
         )?;
 
         output_link_batch(&mut remaining_batch)?;
+        if remaining_batch.size() > 0 {
+            return Err(anyhow!("link batch not properly drained"));
+        }
+
         Ok(())
     }
 }
