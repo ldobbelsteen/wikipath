@@ -226,6 +226,9 @@ impl TableDumpFiles {
                 batch.insert(source, target);
                 if batch.size() > MAX_LINK_BATCH_SIZE {
                     output_link_batch(batch)?;
+                    if batch.size() > 0 {
+                        return Err(anyhow!("link batch not properly drained"));
+                    }
                 }
                 Ok(())
             },
