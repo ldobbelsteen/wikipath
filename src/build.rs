@@ -13,8 +13,10 @@ use std::{
 
 impl Database {
     /// Build a database in a certain language. Requires the database metadata and the downloaded
-    /// dump files. The database will be built in the specified temporary directory and then copied
-    /// to the final directory. Uses the specified number of threads in total.
+    /// dump files. The database will be built in the specified temporary path and then copied
+    /// to the final path. Note that the temporary path should point to a directory that does not
+    /// yet exist, and the final path fo a file that does not exist. Uses the specified number
+    /// of threads in total.
     pub fn build(
         metadata: &Metadata,
         dump_files: &TableDumpFiles,
@@ -24,8 +26,16 @@ impl Database {
     ) -> Result<()> {
         let start = Instant::now();
 
+        if tmp_path.exists() {
+            return Err(anyhow!(
+                "temporary database path '{}' already exists",
+                tmp_path.display()
+            ));
+        }
+
         log::info!("creating new database");
         std::fs::create_dir_all(tmp_path)?;
+
         let db = Database::open(tmp_path, Mode::Build)?;
 
         {

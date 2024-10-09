@@ -49,10 +49,11 @@ impl Metadata {
     }
 }
 
+/// The modes in which a database can be opened.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Mode {
-    Serve,
-    Build,
+    Serve, // read-only mode for serving shorest path queries
+    Build, // read-write mode for building the database
 }
 
 #[derive(Debug)]
@@ -127,6 +128,7 @@ impl Database {
         })
     }
 
+    /// Extract metadata from the filename of a database path.
     pub fn get_metadata(path: &Path, mode: &Mode) -> Result<Metadata> {
         match mode {
             Mode::Serve => {
@@ -158,14 +160,17 @@ impl Database {
 
     /// Create a read transaction on the database. Do not forget to commit the transaction.
     pub fn read_txn(&self) -> Result<heed::RoTxn<'_>> {
-        let txn = self.env.read_txn()?;
-        Ok(txn)
+        Ok(self.env.read_txn()?)
     }
 
     /// Create a write transaction on the database. Do not forget to commit the transaction.
+    /// Only allowed in build mode.
     pub fn write_txn(&self) -> Result<heed::RwTxn<'_>> {
-        let txn = self.env.write_txn()?;
-        Ok(txn)
+        if self.mode != Mode::Build {
+            return Err(anyhow!("write transactions are only allowed in build mode"));
+        }
+
+        Ok(self.env.write_txn()?)
     }
 
     /// Get the redirect of a page.
@@ -206,7 +211,7 @@ impl Database {
 
     /// Insert links into the database in the form of incoming links. If the target page already has
     /// incoming links, the new links are added to its entry. Returns whether any previous links were
-    /// present already (which makes the insert operation relatively expensive).
+    /// present already (which makes this operation relatively expensive and is thus really not desirable).
     pub fn insert_links_incoming(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -229,18 +234,12 @@ impl Database {
 
     /// Generate the outgoing links table. Since it is only possible to insert links in the incoming
     /// form, this function must be called after all links have been inserted to ensure the outgoing
-    /// table is also populated. Any previous values in the outgoing table are removed.
+    /// table is also populated. Any previous values in the outgoing table are cleared beforehand.
     pub fn generate_outgoing_table(&self, txn: &mut heed::RwTxn<'_>) -> Result<()> {
-        if self.mode != Mode::Build {
-            return Err(anyhow!(
-                "generating outgoing table is only allowed in build mode"
-            ));
-        }
-
         self.tables.outgoing.clear(txn)?;
 
         log::debug!("building outgoing table entries");
-        let mut outgoing: BTreeMap<PageId, Vec<PageId>> = BTreeMap::new();
+        let mut outgoing: BTreeMap<PageId, Vec<PageId>> = BTreeMap::new(); // here, BTreemap is more memory-dense than HashMap since our page ids are also dense
         for entry in self.tables.incoming.iter(txn)? {
             let (target, sources) = entry?;
             for source in sources {
@@ -262,9 +261,22 @@ impl Database {
     /// is compacted in the process. Only works if the current database is a build database. The build
     /// database directory is removed at the end.
     pub fn copy_to_serve(self, path: &Path) -> Result<()> {
+        if self.mode != Mode::Build {
+            return Err(anyhow!("copying to serve is only allowed in build mode"));
+        }
+
+        if path.exists() {
+            return Err(anyhow!(
+                "serve database path '{}' already exists",
+                path.display()
+            ));
+        }
+
+        log::debug!("copying database to file");
         self.env
             .copy_to_file(path, heed::CompactionOption::Enabled)?;
 
+        log::debug!("removing build database directory");
         let build_path = self.env.path().to_path_buf();
         drop(self);
         std::fs::remove_dir_all(build_path)?;
