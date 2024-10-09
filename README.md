@@ -48,5 +48,6 @@ An example of how the image can be used to build databases:
 ```
 docker run --rm -it \
     --volume /path/to/db/directory:/databases \
+    --volume /path/to/dump/cache/directory:/dumps \
     ghcr.io/ldobbelsteen/wikipath build --languages es,de,fr --date 20240501
 ```

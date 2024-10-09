@@ -5,10 +5,7 @@ use clap::{Parser, Subcommand};
 use database::Database;
 use dump::TableDumpFiles;
 use humantime::format_duration;
-use std::{
-    path::{Path, PathBuf},
-    time::Instant,
-};
+use std::{path::Path, time::Instant};
 use tokio::signal;
 
 mod build;
@@ -37,9 +34,9 @@ enum Action {
         /// Directory to output database(s) to.
         #[clap(long, default_value = "./databases")]
         databases: String,
-        /// Directory to download the dump files to. Uses the temporary directory by default.
-        #[clap(long)]
-        dumps: Option<String>,
+        /// Directory to download the dump files to.
+        #[clap(long, default_value = "./dumps")]
+        dumps: String,
     },
     /// Serve Wikipath database(s).
     Serve {
@@ -85,7 +82,7 @@ async fn main() -> Result<()> {
         } => {
             let date_code = date;
             let databases_dir = Path::new(&databases);
-            let dumps_dir = dumps.map_or(std::env::temp_dir().join("wikipath"), PathBuf::from);
+            let dumps_dir = Path::new(&dumps);
 
             for language_code in languages.split(',') {
                 log::info!("building '{}' database", language_code);
@@ -110,7 +107,7 @@ async fn main() -> Result<()> {
 
                 let start = Instant::now();
                 let dump_files =
-                    TableDumpFiles::download_external(&dumps_dir, external_dump_files).await?;
+                    TableDumpFiles::download_external(dumps_dir, external_dump_files).await?;
                 log::info!(
                     "dump files downloaded in {}!",
                     format_duration(start.elapsed())
