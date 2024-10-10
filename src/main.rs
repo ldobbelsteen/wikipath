@@ -40,9 +40,12 @@ enum Action {
     },
     /// Serve Wikipath database(s).
     Serve {
-        /// Directory of databases.
+        /// Directory containing the databases.
         #[clap(short, default_value = "./databases")]
         databases: String,
+        /// Directory containing the frontend static assets.
+        #[clap(short, default_value = "./web/dist")]
+        web: String,
         /// Port on which to serve the web interface and api.
         #[clap(short, default_value_t = 1789)]
         port: u16,
@@ -64,10 +67,15 @@ async fn main() -> Result<()> {
     };
 
     match args.action {
-        Action::Serve { databases, port } => {
+        Action::Serve {
+            databases,
+            web,
+            port,
+        } => {
             let databases_dir = Path::new(&databases);
+            let web_dir = Path::new(&web);
             tokio::select! {
-                res = serve::serve(databases_dir, port) => res,
+                res = serve::serve(databases_dir, web_dir, port) => res,
                 () = ctrl_c => {
                     log::info!("ctrl-c received, exiting");
                     Ok(())

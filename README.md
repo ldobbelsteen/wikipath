@@ -18,7 +18,7 @@ Then, to build the backend, back in the root of the project run:
 cargo build --release
 ```
 
-This will build a binary in the `./target/release` directory with the frontend embedded.
+This will build a binary in the `./target/release` directory.
 
 ## Databases
 

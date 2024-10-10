@@ -2,44 +2,85 @@ use crate::database::{Database, Metadata, Mode, PageId};
 use anyhow::Result;
 use axum::{
     extract::{Extension, Query},
-    http::{
-        header::{self, CACHE_CONTROL},
-        HeaderValue, StatusCode, Uri,
-    },
-    response::{Html, IntoResponse, Response},
+    http::{header::CACHE_CONTROL, HeaderValue, StatusCode},
+    response::{IntoResponse, Response},
     routing::get,
     Json, Router,
 };
-use rust_embed::RustEmbed;
 use serde::Deserialize;
 use std::{
     collections::HashMap,
     fs::{self},
     path::Path,
-    sync::{Arc, RwLock},
+    sync::Arc,
     time::Duration,
 };
-use tokio::{net::TcpListener, task::JoinHandle};
-use tower_http::{set_header::SetResponseHeaderLayer, timeout::TimeoutLayer};
+use tokio::net::TcpListener;
+use tower::ServiceBuilder;
+use tower_http::{services::ServeDir, set_header::SetResponseHeaderLayer, timeout::TimeoutLayer};
 
-#[derive(RustEmbed)]
-#[folder = "web/dist/"]
-struct FrontendAssets;
-
-type Databases = Arc<RwLock<HashMap<Metadata, Database>>>;
-
-fn not_found() -> Response {
-    (StatusCode::NOT_FOUND, "404").into_response()
+#[derive(Debug)]
+struct DatabaseSet {
+    inner: HashMap<Metadata, Database>,
+    json: Json<Vec<Metadata>>,
 }
 
-async fn list_databases_handler(Extension(databases): Extension<Databases>) -> Response {
-    let guard = databases.read().unwrap();
-    let mut list = guard.values().map(|db| &db.metadata).collect::<Vec<_>>();
+impl DatabaseSet {
+    fn load(databases_dir: &Path) -> Result<Self> {
+        let mut inner = HashMap::new();
 
-    // Sort alphabetically by language code.
-    list.sort_by(|a, b| a.language_code.cmp(&b.language_code));
+        // Load all databases from the given directory.
+        for entry in fs::read_dir(databases_dir)? {
+            let path = entry?.path();
 
-    Json(list).into_response()
+            let mode = Mode::Serve;
+            match Database::get_metadata(&path, &mode) {
+                Ok(metadata) => match Database::open(&path, mode) {
+                    Ok(database) => {
+                        inner.insert(metadata, database);
+                        log::info!("opened database '{}'", path.display());
+                    }
+                    Err(e) => {
+                        log::warn!("skipping database '{}': {}", path.display(), e);
+                    }
+                },
+                Err(e) => {
+                    log::debug!("silently skipping database '{}': {}", path.display(), e);
+                }
+            }
+        }
+
+        log::info!("database set loading complete");
+        let json = Self::to_json_internal(&inner);
+        Ok(Self { inner, json })
+    }
+
+    /// Convert this set of databases to a list of their metadata as JSON response.
+    fn to_json(&self) -> Json<Vec<Metadata>> {
+        self.json.clone()
+    }
+
+    /// Get a database by its metadata.
+    fn get_by_metadata(&self, metadata: &Metadata) -> Option<&Database> {
+        self.inner.get(metadata)
+    }
+
+    /// Convert the inner hashmap to a list of metadata as JSON response sorted by language code.
+    fn to_json_internal(inner: &HashMap<Metadata, Database>) -> Json<Vec<Metadata>> {
+        let mut list = inner
+            .values()
+            .map(|db| db.metadata.clone())
+            .collect::<Vec<_>>();
+
+        // Sort alphabetically by language code.
+        list.sort_by(|a, b| a.language_code.cmp(&b.language_code));
+
+        Json(list)
+    }
+}
+
+async fn list_databases_handler(Extension(databases): Extension<Arc<DatabaseSet>>) -> Response {
+    databases.to_json().into_response()
 }
 
 #[derive(Debug, Deserialize)]
@@ -52,109 +93,65 @@ struct ShortestPathsQuery {
 }
 
 async fn shortest_paths_handler(
-    Extension(databases): Extension<Databases>,
+    Extension(databases): Extension<Arc<DatabaseSet>>,
     query: Query<ShortestPathsQuery>,
 ) -> Response {
     let query = query.0;
+
     let metadata = Metadata {
         language_code: query.language_code,
         date_code: query.date_code,
     };
-    let guard = databases.read().unwrap();
-    if let Some(database) = guard.get(&metadata) {
-        match database.get_shortest_paths(query.source, query.target) {
-            Ok(paths) => Json(paths).into_response(),
-            Err(e) => {
-                let response = (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "unexpected database error",
-                );
-                log::error!("failed getting shortest paths: {e}");
-                response.into_response()
-            }
+
+    let result = tokio::task::spawn_blocking(move || -> Response {
+        match databases.get_by_metadata(&metadata) {
+            None => StatusCode::NOT_FOUND.into_response(),
+            Some(db) => match db.get_shortest_paths(query.source, query.target) {
+                Ok(paths) => Json(paths).into_response(),
+                Err(e) => {
+                    log::error!("failed getting shortest paths: {e}");
+                    StatusCode::INTERNAL_SERVER_ERROR.into_response()
+                }
+            },
         }
-    } else {
-        not_found()
-    }
+    })
+    .await;
+
+    result.unwrap_or_else(|e| {
+        log::error!("getting shortest paths task join error: {e}");
+        StatusCode::INTERNAL_SERVER_ERROR.into_response()
+    })
 }
 
-async fn frontend_asset_handler(uri: Uri) -> Response {
-    let path = uri.path().trim_start_matches('/');
-
-    if path.is_empty() || path == "index.html" {
-        return match FrontendAssets::get("index.html") {
-            Some(content) => Html(content.data).into_response(),
-            None => not_found(),
-        };
-    }
-
-    match FrontendAssets::get(path) {
-        Some(content) => {
-            let mime = mime_guess::from_path(path).first_or_octet_stream();
-            ([(header::CONTENT_TYPE, mime.as_ref())], content.data).into_response()
-        }
-        None => not_found(),
-    }
-}
-
-pub async fn serve(databases_dir: &Path, listening_port: u16) -> Result<()> {
-    let databases: Databases = Arc::new(RwLock::new(HashMap::new()));
+pub async fn serve(databases_dir: &Path, web_dir: &Path, listening_port: u16) -> Result<()> {
+    let databases = Arc::new(DatabaseSet::load(databases_dir)?);
 
     let router = Router::new()
-        .route("/api/list_databases", get(list_databases_handler))
+        .route(
+            "/api/list_databases",
+            get(list_databases_handler).layer(Extension(databases.clone())),
+        )
         .route(
             "/api/shortest_paths",
-            get(shortest_paths_handler).layer(SetResponseHeaderLayer::overriding(
-                CACHE_CONTROL,
-                HeaderValue::from_str("max-age=3600")?, // cached for an hour
-            )),
+            get(shortest_paths_handler).layer(
+                ServiceBuilder::new()
+                    .layer(TimeoutLayer::new(Duration::from_secs(10))) // timeout after 10 seconds to prevent long-running searches
+                    .layer(Extension(databases.clone())), // give access to the databases
+            ),
         )
-        .layer(Extension(databases.clone()))
-        .route(
-            "/assets/*f",
-            get(frontend_asset_handler).layer(SetResponseHeaderLayer::overriding(
-                CACHE_CONTROL,
-                HeaderValue::from_str("max-age=31536000")?, // cached for a year, since assets are hashed
-            )),
+        .nest_service(
+            "/assets", // treat frontend "assets" files separately, since they have hashed filenames
+            ServiceBuilder::new()
+                .layer(SetResponseHeaderLayer::overriding(
+                    CACHE_CONTROL,
+                    HeaderValue::from_str("max-age=31536000")?, // cached for a year
+                ))
+                .service(ServeDir::new(Path::join(Path::new(web_dir), "assets"))),
         )
-        .fallback(frontend_asset_handler)
-        .layer(TimeoutLayer::new(Duration::from_secs(10)));
+        .fallback_service(ServeDir::new(web_dir)); // serve frontend files as fallback
 
     log::info!("listening on http://localhost:{listening_port}");
     let listener = TcpListener::bind(format!(":::{listening_port}")).await?;
-    let listener_handle: JoinHandle<Result<()>> = tokio::spawn(async move {
-        axum::serve(listener, router).await?;
-        Ok(())
-    });
-
-    let databases_dir = databases_dir.to_path_buf();
-    let loader_handle: JoinHandle<Result<()>> = tokio::spawn(async move {
-        for entry in fs::read_dir(databases_dir)? {
-            let path = entry?.path();
-
-            let mode = Mode::Serve;
-            match Database::get_metadata(&path, &mode) {
-                Ok(metadata) => match Database::open(&path, mode) {
-                    Ok(database) => {
-                        databases.write().unwrap().insert(metadata, database);
-                        log::info!("opened database '{}'", path.display());
-                    }
-                    Err(e) => {
-                        log::warn!("skipping database '{}': {}", path.display(), e);
-                    }
-                },
-                Err(e) => {
-                    log::debug!("silently skipping database '{}': {}", path.display(), e);
-                }
-            }
-        }
-        log::info!("loaded all valid databases");
-        Ok(())
-    });
-
-    // Return the first error that may occur between the loader and listener.
-    match tokio::try_join!(loader_handle, listener_handle)? {
-        (Err(err), _) | (_, Err(err)) => Err(err),
-        (Ok(()), Ok(())) => Ok(()),
-    }
+    axum::serve(listener, router).await?;
+    Ok(())
 }

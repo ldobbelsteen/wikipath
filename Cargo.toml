@@ -6,18 +6,17 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.89"
 axum = "0.7.7"
-clap = { version = "4.5.18", features = ["derive"] }
+clap = { version = "4.5.20", features = ["derive"] }
 data-encoding = "2.6.0"
 env_logger = "0.11.5"
 flate2 = "1.0.34"
 heed = "0.20.5"
 humantime = "2.1.0"
 log = "0.4.22"
-mime_guess = "2.0.5"
 regex = "1.11.0"
 reqwest = { version = "0.12.8", features = ["stream"] }
 ring = "0.17.8"
-rust-embed = "8.5.0"
 serde = { version = "1.0.210", features = ["derive"] }
 tokio = { version = "1.40.0", features = ["full"] }
+tower = "0.5.1"
 tower-http = { version = "0.6.1", features = ["fs", "timeout", "set-header"] }
