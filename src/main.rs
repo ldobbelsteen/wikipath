@@ -104,7 +104,7 @@ async fn main() -> Result<()> {
                 let metadatas = TableDumpFiles::get_metadatas(language_code, &date_code).await?;
                 let metadata = metadatas.to_normal();
 
-                let tmp_dir = databases_dir.join("tmp");
+                let tmp_dir = databases_dir.join(".tmp");
                 let tmp_path = tmp_dir.join(metadata.to_name());
                 if Path::new(&tmp_path).exists() {
                     log::warn!("temporary database from previous build found, removing");
