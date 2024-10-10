@@ -82,7 +82,26 @@ struct Tables {
 impl Database {
     /// Open a database at a path. Returns an error if the database name in the path is not correctly formatted.
     pub fn open(path: &Path, mode: Mode) -> Result<Self> {
-        let metadata = Self::get_metadata(path, &mode)?;
+        match mode {
+            Mode::Serve => {
+                if !path.is_file() {
+                    return Err(anyhow!(
+                        "serve database path '{}' is not a file",
+                        path.display()
+                    ));
+                }
+            }
+            Mode::Build => {
+                if !path.is_dir() {
+                    return Err(anyhow!(
+                        "build database path '{}' is not a directory",
+                        path.display()
+                    ));
+                }
+            }
+        }
+
+        let metadata = Self::get_metadata(path)?;
 
         let env = unsafe {
             EnvOpenOptions::new()
@@ -137,26 +156,7 @@ impl Database {
     }
 
     /// Extract metadata from the filename of a database path.
-    pub fn get_metadata(path: &Path, mode: &Mode) -> Result<Metadata> {
-        match mode {
-            Mode::Serve => {
-                if !path.is_file() {
-                    return Err(anyhow!(
-                        "serve database path '{}' is not a file",
-                        path.display()
-                    ));
-                }
-            }
-            Mode::Build => {
-                if !path.is_dir() {
-                    return Err(anyhow!(
-                        "build database path '{}' is not a directory",
-                        path.display()
-                    ));
-                }
-            }
-        }
-
+    pub fn get_metadata(path: &Path) -> Result<Metadata> {
         let filename = path.file_name().and_then(|s| s.to_str()).context(format!(
             "database filename in path '{}' is not valid",
             path.display()

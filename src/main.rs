@@ -11,6 +11,7 @@ use tokio::signal;
 mod build;
 mod database;
 mod dump;
+mod misc;
 mod parse;
 mod search;
 mod serve;
@@ -37,6 +38,9 @@ enum Action {
         /// Directory to download the dump files to.
         #[clap(long, default_value = "./dumps")]
         dumps: String,
+        /// After building, cleanup existing dump files and database of the same language but with a different date code.
+        #[clap(long, default_value = "true")]
+        cleanup: bool,
     },
     /// Serve Wikipath database(s).
     Serve {
@@ -87,6 +91,7 @@ async fn main() -> Result<()> {
             date,
             databases,
             dumps,
+            cleanup,
         } => {
             let date_code = date;
             let databases_dir = Path::new(&databases);
@@ -96,12 +101,11 @@ async fn main() -> Result<()> {
                 log::info!("building '{}' database", language_code);
 
                 log::info!("getting dump information");
-                let external_dump_files =
-                    TableDumpFiles::get_external(language_code, &date_code).await?;
+                let metadatas = TableDumpFiles::get_metadatas(language_code, &date_code).await?;
+                let metadata = metadatas.to_normal();
 
-                let metadata = external_dump_files.get_metadata();
-
-                let tmp_path = databases_dir.join("build").join(metadata.to_name());
+                let tmp_dir = databases_dir.join("tmp");
+                let tmp_path = tmp_dir.join(metadata.to_name());
                 if Path::new(&tmp_path).exists() {
                     log::warn!("temporary database from previous build found, removing");
                     std::fs::remove_dir_all(&tmp_path)?;
@@ -114,14 +118,19 @@ async fn main() -> Result<()> {
                 }
 
                 let start = Instant::now();
-                let dump_files =
-                    TableDumpFiles::download_external(dumps_dir, external_dump_files).await?;
+                let dump_files = TableDumpFiles::download(dumps_dir, metadatas).await?;
                 log::info!(
                     "dump files downloaded in {}!",
                     format_duration(start.elapsed())
                 );
 
                 Database::build(&metadata, &dump_files, &tmp_path, &final_path)?;
+
+                if cleanup {
+                    misc::remove_different_date_databases(&metadata, &tmp_dir)?;
+                    misc::remove_different_date_databases(&metadata, databases_dir)?;
+                    TableDumpFiles::remove_different_date_dump_files(&metadata, dumps_dir)?;
+                }
             }
 
             Ok(())

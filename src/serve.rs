@@ -34,9 +34,8 @@ impl DatabaseSet {
         for entry in fs::read_dir(databases_dir)? {
             let path = entry?.path();
 
-            let mode = Mode::Serve;
-            match Database::get_metadata(&path, &mode) {
-                Ok(md) => match Database::open(&path, mode) {
+            match Database::get_metadata(&path) {
+                Ok(md) => match Database::open(&path, Mode::Serve) {
                     Ok(db) => {
                         // If any older databases were opened, close them again.
                         while let Some(md2) = inner.keys().find(|&m| m.is_older(&md)) {
@@ -60,7 +59,7 @@ impl DatabaseSet {
                     }
                 },
                 Err(e) => {
-                    log::debug!("silently skipping database '{}': {}", path.display(), e);
+                    log::debug!("skipping non-database path '{}': {}", path.display(), e);
                 }
             }
         }
