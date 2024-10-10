@@ -7,12 +7,13 @@ use axum::{
     routing::get,
     Json, Router,
 };
+use notify_debouncer_mini::{new_debouncer, notify::RecursiveMode, DebounceEventResult};
 use serde::Deserialize;
 use std::{
     collections::HashMap,
     fs::{self},
     path::Path,
-    sync::Arc,
+    sync::{Arc, RwLock},
     time::Duration,
 };
 use tokio::net::TcpListener;
@@ -27,7 +28,7 @@ struct DatabaseSet {
 
 impl DatabaseSet {
     fn load(databases_dir: &Path) -> Result<Self> {
-        let mut inner = HashMap::new();
+        let mut inner: HashMap<Metadata, Database> = HashMap::new();
 
         // Load all databases from the given directory.
         for entry in fs::read_dir(databases_dir)? {
@@ -35,13 +36,27 @@ impl DatabaseSet {
 
             let mode = Mode::Serve;
             match Database::get_metadata(&path, &mode) {
-                Ok(metadata) => match Database::open(&path, mode) {
-                    Ok(database) => {
-                        inner.insert(metadata, database);
-                        log::info!("opened database '{}'", path.display());
+                Ok(md) => match Database::open(&path, mode) {
+                    Ok(db) => {
+                        // If any older databases were opened, close them again.
+                        while let Some(md2) = inner.keys().find(|&m| m.is_older(&md)) {
+                            log::info!("closing older database '{}'", md2.to_name());
+                            let md2 = md2.clone();
+                            inner.remove(&md2);
+                        }
+
+                        // Check if there are no newer databases.
+                        let newest = !inner.keys().any(|m| m.is_newer(&md));
+
+                        if newest {
+                            log::info!("opened database '{}'", md.to_name());
+                            inner.insert(md, db);
+                        } else {
+                            log::info!("skipping older database '{}'", md.to_name());
+                        }
                     }
                     Err(e) => {
-                        log::warn!("skipping database '{}': {}", path.display(), e);
+                        log::warn!("skipping database '{}': {}", md.to_name(), e);
                     }
                 },
                 Err(e) => {
@@ -50,9 +65,16 @@ impl DatabaseSet {
             }
         }
 
-        log::info!("database set loading complete");
+        log::info!("finished loading databases");
         let json = Self::to_json_internal(&inner);
         Ok(Self { inner, json })
+    }
+
+    fn empty() -> Self {
+        Self {
+            inner: HashMap::new(),
+            json: Json(Vec::new()),
+        }
     }
 
     /// Convert this set of databases to a list of their metadata as JSON response.
@@ -79,8 +101,10 @@ impl DatabaseSet {
     }
 }
 
-async fn list_databases_handler(Extension(databases): Extension<Arc<DatabaseSet>>) -> Response {
-    databases.to_json().into_response()
+async fn list_databases_handler(
+    Extension(databases): Extension<Arc<RwLock<DatabaseSet>>>,
+) -> Response {
+    databases.read().unwrap().to_json().into_response()
 }
 
 #[derive(Debug, Deserialize)]
@@ -93,7 +117,7 @@ struct ShortestPathsQuery {
 }
 
 async fn shortest_paths_handler(
-    Extension(databases): Extension<Arc<DatabaseSet>>,
+    Extension(databases): Extension<Arc<RwLock<DatabaseSet>>>,
     query: Query<ShortestPathsQuery>,
 ) -> Response {
     let query = query.0;
@@ -104,6 +128,7 @@ async fn shortest_paths_handler(
     };
 
     let result = tokio::task::spawn_blocking(move || -> Response {
+        let databases = databases.read().unwrap();
         match databases.get_by_metadata(&metadata) {
             None => StatusCode::NOT_FOUND.into_response(),
             Some(db) => match db.get_shortest_paths(query.source, query.target) {
@@ -124,7 +149,43 @@ async fn shortest_paths_handler(
 }
 
 pub async fn serve(databases_dir: &Path, web_dir: &Path, listening_port: u16) -> Result<()> {
-    let databases = Arc::new(DatabaseSet::load(databases_dir)?);
+    let databases = Arc::new(RwLock::new(DatabaseSet::load(databases_dir)?));
+
+    let databases_clone = databases.clone();
+    let databases_dir_clone = databases_dir.to_path_buf();
+    let mut debouncer =
+        new_debouncer(
+            Duration::from_secs(5),
+            move |res: DebounceEventResult| match res {
+                Ok(events) => {
+                    if !events.is_empty() {
+                        log::info!("detected changes in databases directory, reloading");
+                        let mut guard = databases_clone.write().unwrap();
+
+                        // Replace current with empty to drop currently opened databases.
+                        *guard = DatabaseSet::empty();
+
+                        // Load new databases and replace the empty one again.
+                        match DatabaseSet::load(&databases_dir_clone) {
+                            Ok(new) => {
+                                *guard = new;
+                            }
+                            Err(e) => {
+                                log::error!("failed to reload databases: {e}");
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::error!("debouncer error: {e}");
+                }
+            },
+        )?;
+
+    // Watch for changes in the databases directory.
+    debouncer
+        .watcher()
+        .watch(databases_dir, RecursiveMode::NonRecursive)?;
 
     let router = Router::new()
         .route(

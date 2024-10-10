@@ -47,6 +47,14 @@ impl Metadata {
     pub fn to_name(&self) -> String {
         format!("wp-{}-{}", self.language_code, self.date_code)
     }
+
+    pub fn is_newer(&self, other: &Self) -> bool {
+        self.language_code == other.language_code && self.date_code > other.date_code
+    }
+
+    pub fn is_older(&self, other: &Self) -> bool {
+        self.language_code == other.language_code && self.date_code < other.date_code
+    }
 }
 
 /// The modes in which a database can be opened.
