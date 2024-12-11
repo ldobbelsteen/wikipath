@@ -1,11 +1,11 @@
-import React, { ReactNode } from "react";
+import type { ChangeEventHandler, ReactNode } from "react";
 import { twMerge } from "tailwind-merge";
 
 export const Select = (props: {
   label: string;
   value: string;
   disabled: boolean;
-  onChange: React.ChangeEventHandler<HTMLSelectElement>;
+  onChange: ChangeEventHandler<HTMLSelectElement>;
   options: { value: string; children: ReactNode }[];
   optionClassName?: string;
   className?: string;
@@ -21,13 +21,13 @@ export const Select = (props: {
         props.className,
       )}
     >
-      {props.options.map((option, i) => (
+      {props.options.map((opt) => (
         <option
-          key={i}
-          value={option.value}
+          key={opt.value}
+          value={opt.value}
           className={twMerge("cursor-pointer", props.optionClassName)}
         >
-          {option.children}
+          {opt.children}
         </option>
       ))}
     </select>

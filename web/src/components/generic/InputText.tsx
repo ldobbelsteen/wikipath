@@ -1,4 +1,4 @@
-import React from "react";
+import type { ChangeEventHandler, FocusEventHandler } from "react";
 import { twMerge } from "tailwind-merge";
 
 export const InputText = (props: {
@@ -6,9 +6,9 @@ export const InputText = (props: {
   invalid: boolean;
   disabled: boolean;
   placeholder: string;
-  onChange: React.ChangeEventHandler<HTMLInputElement>;
-  onFocus: React.FocusEventHandler<HTMLInputElement>;
-  onBlur: React.FocusEventHandler<HTMLInputElement>;
+  onChange: ChangeEventHandler<HTMLInputElement>;
+  onFocus: FocusEventHandler<HTMLInputElement>;
+  onBlur: FocusEventHandler<HTMLInputElement>;
   className?: string;
 }) => {
   return (

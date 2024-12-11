@@ -1,8 +1,8 @@
-import React, { useEffect, useState } from "react";
-import { toast } from "react-hot-toast";
-import { Select } from "./generic/Select";
-import { Database } from "../schema";
+import { useEffect, useState } from "react";
+import { toast } from "react-toastify";
 import { listDatabases } from "../api";
+import type { Database } from "../schema";
+import { Select } from "./generic/Select";
 
 /** Select the best language based on the user's browser languages. */
 export const defaultDatabase = (databases: Database[]) => {
@@ -16,9 +16,8 @@ export const defaultDatabase = (databases: Database[]) => {
 
   if (databases.length > 0) {
     return databases[0];
-  } else {
-    toast.error("No languages available on this server");
   }
+  toast.error("No languages available on this server");
 };
 
 export const DatabaseSelect = (props: {

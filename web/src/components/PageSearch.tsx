@@ -1,13 +1,13 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
-import { toast } from "react-hot-toast";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "react-toastify";
 import { fetchRandomPage, fetchSuggestions } from "../api";
 import { weakStringEquals } from "../misc";
+import type { Database, Page } from "../schema";
 import Dice from "../static/dice.svg";
 import LoadingBlack from "../static/loading-black.svg";
 import { Button } from "./generic/Button";
 import { InputImage } from "./generic/InputImage";
 import { InputText } from "./generic/InputText";
-import { Database, Page } from "../schema";
 
 const SEARCH_DEBOUNCE_MS = 400;
 
@@ -42,7 +42,9 @@ export const PageSearch = (props: {
   const [inFocus, setInFocus] = useState(false);
   const randomAbort = useRef(new AbortController());
   const matchingAbort = useRef(new AbortController());
-  const matchingDebounce = useRef<ReturnType<typeof setTimeout>>();
+  const matchingDebounce = useRef<ReturnType<typeof setTimeout>>(
+    setTimeout(() => {}, 0),
+  );
 
   const { setState } = props;
 
@@ -187,9 +189,9 @@ export const PageSearch = (props: {
             {props.state.matching === "loading" ? (
               <span className="m-1 text-gray-600">Loading suggestions...</span>
             ) : props.state.matching.suggestions.length > 0 ? (
-              props.state.matching.suggestions.map((suggested, i) => (
+              props.state.matching.suggestions.map((suggested) => (
                 <Button
-                  key={i}
+                  key={suggested.id}
                   onMouseDown={() => {
                     props.setState({
                       search: suggested.title,

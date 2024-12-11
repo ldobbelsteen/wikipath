@@ -1,12 +1,12 @@
-import React, { useCallback, useEffect, useState } from "react";
-import toast from "react-hot-toast";
+import { useCallback, useEffect, useState } from "react";
+import { toast } from "react-toastify";
+import type { Database, Page } from "../schema";
 import LoadingBlack from "../static/loading-black.svg";
 import LoadingWhite from "../static/loading-white.svg";
 import Swap from "../static/swap.svg";
-import { SearchState, PageSearch, defaultSearchState } from "./PageSearch";
+import { PageSearch, type SearchState, defaultSearchState } from "./PageSearch";
 import { Button } from "./generic/Button";
 import { InputImage } from "./generic/InputImage";
-import { Database, Page } from "../schema";
 
 export const PageForm = (props: {
   database: Database;
@@ -85,7 +85,7 @@ export const PageForm = (props: {
   useEffect(() => {
     setSource(defaultSearchState());
     setTarget(defaultSearchState());
-  }, [props.database]);
+  }, []);
 
   return (
     <>

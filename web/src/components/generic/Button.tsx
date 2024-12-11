@@ -1,10 +1,10 @@
-import React, { ReactNode } from "react";
+import type { MouseEventHandler, ReactNode } from "react";
 import { twMerge } from "tailwind-merge";
 
 export const Button = (props: {
   disabled?: boolean;
-  onClick?: React.MouseEventHandler<HTMLButtonElement>;
-  onMouseDown?: React.MouseEventHandler<HTMLButtonElement>;
+  onClick?: MouseEventHandler<HTMLButtonElement>;
+  onMouseDown?: MouseEventHandler<HTMLButtonElement>;
   children: ReactNode;
   className?: string;
 }) => {

@@ -3,6 +3,7 @@ WORKDIR /build
 COPY web/package*.json .
 RUN npm ci
 COPY web .
+RUN npm run check
 RUN npm run build
 
 FROM docker.io/library/rust:1.81-bookworm AS bin

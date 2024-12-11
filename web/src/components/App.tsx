@@ -1,12 +1,13 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Toaster, toast } from "react-hot-toast";
+import { ToastContainer, toast } from "react-toastify";
+import { fetchShortestPaths } from "../api";
+import type { Database, Page, Paths } from "../schema";
 import { DatabaseSelect } from "./DatabaseSelect";
 import { PageForm } from "./PageForm";
 import { PathsGraph } from "./PathsGraph";
 import { Link } from "./generic/Link";
-import { Database, Page, Paths } from "../schema";
-import { fetchShortestPaths } from "../api";
+import "react-toastify/dist/ReactToastify.css";
 
 const App = () => {
   const [database, setDatabase] = useState<Database>();
@@ -65,7 +66,7 @@ const App = () => {
               }`}
       </span>
       <PathsGraph className="grow" paths={paths} />
-      <Toaster />
+      <ToastContainer />
     </>
   );
 };

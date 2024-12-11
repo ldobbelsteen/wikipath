@@ -1,6 +1,6 @@
 import {
-  D3DragEvent,
-  D3ZoomEvent,
+  type D3DragEvent,
+  type D3ZoomEvent,
   drag,
   forceCenter,
   forceLink,
@@ -11,9 +11,9 @@ import {
   select,
   zoom,
 } from "d3";
-import { SimulationLinkDatum, SimulationNodeDatum } from "d3-force";
-import React, { useEffect, useRef } from "react";
-import { Paths } from "../schema";
+import type { SimulationLinkDatum, SimulationNodeDatum } from "d3-force";
+import { useEffect, useRef } from "react";
+import type { Paths } from "../schema";
 
 type Link = SimulationLinkDatum<Node>;
 interface Node extends SimulationNodeDatum {
@@ -44,7 +44,7 @@ export const PathsGraph = (props: {
     /** Extract nodes and links for D3 from the paths */
     const nodes: Node[] = [];
     const links: Link[] = [];
-    paths.paths.forEach((path) => {
+    for (const path of paths.paths) {
       let previousNode: Node;
       path.forEach((page, index) => {
         let currentNode = nodes.find((node) => node.id === page.id);
@@ -56,7 +56,7 @@ export const PathsGraph = (props: {
           };
           nodes.push(currentNode);
         }
-        if (index != 0) {
+        if (index !== 0) {
           links.push({
             source: previousNode,
             target: currentNode,
@@ -64,7 +64,7 @@ export const PathsGraph = (props: {
         }
         previousNode = currentNode;
       });
-    });
+    }
 
     /** Force simulation; gravitate to center and gravitate away from eachother */
     const centerX = 0.5 * (ref.current.clientWidth || 0);

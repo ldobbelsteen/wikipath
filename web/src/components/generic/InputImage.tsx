@@ -1,11 +1,11 @@
-import React from "react";
+import type { MouseEventHandler } from "react";
 import { twMerge } from "tailwind-merge";
 
 export const InputImage = (props: {
   src: string;
   alt: string;
   disabled: boolean;
-  onClick: React.MouseEventHandler<HTMLInputElement>;
+  onClick: MouseEventHandler<HTMLInputElement>;
   className?: string;
 }) => {
   return (

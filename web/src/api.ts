@@ -1,16 +1,16 @@
 import { z } from "zod";
 import { flattenUnique } from "./misc";
-import { getTitle, storeTitle } from "./storage";
 import {
-  Database,
+  type Database,
   DatabaseSchema,
-  Page,
-  Paths,
+  type Page,
+  type Paths,
   PathsSchema,
   WikipediaRandomSchema,
   WikipediaSearchSchema,
   WikipediaTitlesSchema,
 } from "./schema";
+import { getTitle, storeTitle } from "./storage";
 
 const headers = {
   "Api-User-Agent": "Wikipath/1.1 (https://github.com/ldobbelsteen/wikipath/)",
@@ -30,12 +30,10 @@ const get = async <T, U>(
     const parse = await schema.safeParseAsync(await res.json());
     if (!parse.success) {
       return Promise.reject(parse.error);
-    } else {
-      return parse.data;
     }
-  } else {
-    return Promise.reject(new Error(await res.text()));
+    return parse.data;
   }
+  return Promise.reject(new Error(await res.text()));
 };
 
 export const listDatabases = async (): Promise<Database[]> => {
@@ -99,10 +97,10 @@ const fetchTitles = async (
       const delimited = ids.join("|");
       const url = `https://${languageCode}.wikipedia.org/w/api.php?origin=*&action=query&format=json&pageids=${delimited}`;
       const titles = await get(url, WikipediaTitlesSchema);
-      Object.entries(titles).forEach(([id, title]) => {
+      for (const [id, title] of Object.entries(titles)) {
         storeTitle(id, title);
-        result[parseInt(id)] = title;
-      });
+        result[Number.parseInt(id)] = title;
+      }
     }
   }
 

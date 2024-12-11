@@ -46,7 +46,7 @@ export const PathsSchema = z.object({
     z
       .string()
       .min(1)
-      .transform((s) => parseInt(s)),
+      .transform((s) => Number.parseInt(s)),
     z.array(IdSchema),
   ),
   languageCode: z.string().min(1),
@@ -77,7 +77,7 @@ export const WikipediaTitlesSchema = z
   })
   .transform((obj) =>
     Object.values(obj.query.pages).reduce<Record<number, string>>(
-      (record, page) => ({ ...record, [page.pageid]: page.title }),
+      (record, page) => Object.assign(record, { [page.pageid]: page.title }),
       {},
     ),
   );

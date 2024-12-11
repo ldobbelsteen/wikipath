@@ -1,11 +1,11 @@
 /** Flatten a two-dimensional array, removing any duplicates */
 export const flattenUnique = <T>(arr: T[][]): T[] => {
   const set = new Set<T>();
-  arr.forEach((subArr) => {
-    subArr.forEach((element) => {
+  for (const subArr of arr) {
+    for (const element of subArr) {
       set.add(element);
-    });
-  });
+    }
+  }
   return Array.from(set);
 };
 
