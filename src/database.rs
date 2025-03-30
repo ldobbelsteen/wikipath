@@ -4,6 +4,7 @@ use heed::{EnvFlags, EnvOpenOptions, PutFlags, RoTxn};
 use regex::Regex;
 use serde::Serialize;
 use std::collections::BTreeMap;
+use std::fs;
 use std::path::Path;
 
 /// Representation of a page id. The database schema uses 10-digit unsigned integers (<https://www.mediawiki.org/wiki/Manual:Pagelinks_table>).
@@ -68,7 +69,7 @@ pub enum Mode {
 pub struct Database {
     pub metadata: Metadata,
     mode: Mode,
-    env: heed::Env,
+    env: heed::Env<heed::WithTls>,
     tables: Tables,
 }
 
@@ -167,7 +168,7 @@ impl Database {
     }
 
     /// Create a read transaction on the database. Do not forget to commit the transaction.
-    pub fn read_txn(&self) -> Result<heed::RoTxn<'_>> {
+    pub fn read_txn(&self) -> Result<heed::RoTxn<'_, heed::WithTls>> {
         Ok(self.env.read_txn()?)
     }
 
@@ -281,8 +282,9 @@ impl Database {
         }
 
         log::debug!("copying database to file");
+        let mut file = fs::File::create(path)?;
         self.env
-            .copy_to_file(path, heed::CompactionOption::Enabled)?;
+            .copy_to_file(&mut file, heed::CompactionOption::Enabled)?;
 
         log::debug!("removing build database directory");
         let build_path = self.env.path().to_path_buf();
