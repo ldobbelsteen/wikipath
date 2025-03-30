@@ -33,10 +33,10 @@ enum Action {
         #[clap(long, default_value = "latest")]
         date: String,
         /// Directory to output database(s) to.
-        #[clap(long, default_value = "./databases")]
+        #[clap(long, default_value = "databases")]
         databases: String,
         /// Directory to download the dump files to.
-        #[clap(long, default_value = "./dumps")]
+        #[clap(long, default_value = "dumps")]
         dumps: String,
         /// After building, cleanup existing dump files and database of the same language but with a different date code.
         #[clap(long, default_value = "true")]
@@ -45,10 +45,10 @@ enum Action {
     /// Serve Wikipath database(s).
     Serve {
         /// Directory containing the databases.
-        #[clap(short, default_value = "./databases")]
+        #[clap(short, default_value = "databases")]
         databases: String,
         /// Directory containing the frontend static assets.
-        #[clap(short, default_value = "./web/dist")]
+        #[clap(short, default_value = "web/dist")]
         web: String,
         /// Port on which to serve the web interface and api.
         #[clap(short, default_value_t = 1789)]

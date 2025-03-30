@@ -7,7 +7,7 @@ use axum::{
     routing::get,
     Json, Router,
 };
-use notify_debouncer_mini::{new_debouncer, notify::RecursiveMode, DebounceEventResult};
+use notify_debouncer_full::{new_debouncer, notify::RecursiveMode, DebounceEventResult};
 use serde::Deserialize;
 use std::{
     collections::HashMap,
@@ -152,39 +152,50 @@ pub async fn serve(databases_dir: &Path, web_dir: &Path, listening_port: u16) ->
 
     let databases_clone = databases.clone();
     let databases_dir_clone = databases_dir.to_path_buf();
-    let mut debouncer =
-        new_debouncer(
-            Duration::from_secs(5),
-            move |res: DebounceEventResult| match res {
-                Ok(events) => {
-                    if !events.is_empty() {
-                        log::info!("detected changes in databases directory, reloading");
-                        let mut guard = databases_clone.write().unwrap();
-
-                        // Replace current with empty to drop currently opened databases.
-                        *guard = DatabaseSet::empty();
-
-                        // Load new databases and replace the empty one again.
-                        match DatabaseSet::load(&databases_dir_clone) {
-                            Ok(new) => {
-                                *guard = new;
+    let mut debouncer = new_debouncer(
+        Duration::from_secs(5),
+        None,
+        move |res: DebounceEventResult| match res {
+            Ok(events) => {
+                let reload = events.into_iter().any(|e| {
+                    let is_change = e.kind.is_create() || e.kind.is_modify() || e.kind.is_remove();
+                    let involves_db = e.paths.iter().any(|p| {
+                        if let Some(name) = p.file_name() {
+                            if let Some(name) = name.to_str() {
+                                return Metadata::from_name(name).is_ok();
                             }
-                            Err(e) => {
-                                log::error!("failed to reload databases: {e}");
-                            }
+                        }
+                        false
+                    });
+                    is_change && involves_db
+                });
+
+                if reload {
+                    log::info!("detected changes in databases directory, reloading");
+                    let mut guard = databases_clone.write().unwrap();
+
+                    // Replace current with empty to drop currently opened databases.
+                    *guard = DatabaseSet::empty();
+
+                    // Load new databases and replace the empty one again.
+                    match DatabaseSet::load(&databases_dir_clone) {
+                        Ok(new) => {
+                            *guard = new;
+                        }
+                        Err(e) => {
+                            log::error!("failed to reload databases: {e}");
                         }
                     }
                 }
-                Err(e) => {
-                    log::error!("debouncer error: {e}");
-                }
-            },
-        )?;
+            }
+            Err(e) => {
+                log::error!("debouncer error: {e:?}");
+            }
+        },
+    )?;
 
     // Watch for changes in the databases directory.
-    debouncer
-        .watcher()
-        .watch(databases_dir, RecursiveMode::NonRecursive)?;
+    debouncer.watch(databases_dir, RecursiveMode::NonRecursive)?;
 
     let router = Router::new()
         .route(

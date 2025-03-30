@@ -27,7 +27,7 @@ pub struct Metadata {
 
 impl Metadata {
     /// Extract metadata from the name of a database.
-    fn from_name(s: &str) -> Result<Self> {
+    pub fn from_name(s: &str) -> Result<Self> {
         let re = Regex::new(r"^wp-([a-zA-Z]+)-([0-9]+)$")?;
         if let Some(caps) = re.captures(s) {
             if let Some(language_code) = caps.get(1) {
