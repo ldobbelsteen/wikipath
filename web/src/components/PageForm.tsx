@@ -82,10 +82,11 @@ export const PageForm = (props: {
   }, [pendingSwap, swap]);
 
   /** Clear input on database change. */
+  // biome-ignore lint/correctness/useExhaustiveDependencies(props.database): intentional side effect
   useEffect(() => {
     setSource(defaultSearchState());
     setTarget(defaultSearchState());
-  }, []);
+  }, [props.database]);
 
   return (
     <>
