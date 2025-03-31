@@ -320,7 +320,6 @@ fn sliding_regex_file<
 
 /// Remove chains of redirects from a redirect mapping by concatenating redirects to redirects into
 /// single redirects. This will flatten any redirect paths larger than one.
-#[must_use]
 pub fn cleanup_redirects(mut redirs: HashMap<PageId, PageId>) -> HashMap<PageId, PageId> {
     let mut updates = HashMap::new();
     let mut removals = HashSet::new();

@@ -157,16 +157,10 @@ pub async fn serve(databases_dir: &Path, web_dir: &Path, listening_port: u16) ->
         None,
         move |res: DebounceEventResult| match res {
             Ok(events) => {
+                // Check if any of the events involve a change in a database.
                 let reload = events.into_iter().any(|e| {
                     let is_change = e.kind.is_create() || e.kind.is_modify() || e.kind.is_remove();
-                    let involves_db = e.paths.iter().any(|p| {
-                        if let Some(name) = p.file_name() {
-                            if let Some(name) = name.to_str() {
-                                return Metadata::from_name(name).is_ok();
-                            }
-                        }
-                        false
-                    });
+                    let involves_db = e.paths.iter().any(|p| Database::get_metadata(p).is_ok());
                     is_change && involves_db
                 });
 
