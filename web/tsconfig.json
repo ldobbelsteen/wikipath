@@ -11,5 +11,5 @@
     "skipLibCheck": true,
     "types": ["vite/client"]
   },
-  "include": ["*.js", "src/**/*.ts", "src/**/*.tsx"]
+  "include": ["**/*.ts", "**/*.tsx"]
 }
