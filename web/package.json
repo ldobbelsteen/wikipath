@@ -8,6 +8,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
+    "@tailwindcss/vite": "^4.0.17",
     "@types/d3": "^7.4.3",
     "@types/react": "^19.0.12",
     "@types/react-dom": "^19.0.4",
@@ -15,12 +16,10 @@
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-toastify": "^11.0.5",
+    "tailwind-merge": "^3.0.2",
     "tailwindcss": "^4.0.17",
     "typescript": "^5.8.2",
     "vite": "^6.2.3",
     "zod": "^3.24.2"
-  },
-  "dependencies": {
-    "tailwind-merge": "^3.0.2"
   }
 }
