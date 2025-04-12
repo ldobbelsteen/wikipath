@@ -44,3 +44,10 @@ jobs:
           registry: ${{ env.REGISTRY }}
           image: ${{ steps.image-build.outputs.image }}
           tags: ${{ steps.image-build.outputs.tags }}
+
+      - name: Remove untagged images
+        uses: actions/delete-package-versions@v5
+        with:
+          package-type: container
+          package-name: ${{ env.IMAGE_NAME }}
+          delete-only-untagged-versions: true
