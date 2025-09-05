@@ -1,0 +1,17 @@
+name: CI
+on: push
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: ldobbelsteen/build-push-action@main
+        with:
+          image: wikipath
+          owner: ldobbelsteen
+          actor: ${{ github.actor }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          push: ${{ github.ref == 'refs/heads/main' }}
