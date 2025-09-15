@@ -1,4 +1,4 @@
-FROM docker.io/node:lts-alpine AS web
+FROM docker.io/node:22-alpine AS web
 WORKDIR /build
 COPY web/package*.json .
 RUN npm ci
@@ -6,7 +6,7 @@ COPY web .
 RUN npm run check
 RUN npm run build
 
-FROM docker.io/rust:1-bookworm AS bin
+FROM docker.io/rust:1.89-bookworm AS bin
 WORKDIR /build
 COPY . .
 RUN cargo build --release

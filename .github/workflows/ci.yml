@@ -1,0 +1,11 @@
+name: ci
+
+on: push
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    uses: ldobbelsteen/ghcr-build-push/.github/workflows/main.yml@v1
