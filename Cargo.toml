@@ -7,7 +7,7 @@ edition = "2021"
 anyhow = "1.0.97"
 axum = "0.8.4"
 clap = { version = "4.5.34", features = ["derive"] }
-data-encoding = "2.8.0"
+data-encoding = "2.9.0"
 env_logger = "0.11.7"
 flate2 = "1.1.0"
 heed = "0.22.0"
