@@ -20,4 +20,4 @@ ring = "0.17.14"
 serde = { version = "1.0.216", features = ["derive"] }
 tokio = { version = "1.46.1", features = ["full"] }
 tower = "0.5.2"
-tower-http = { version = "0.6.2", features = ["fs", "timeout", "set-header"] }
+tower-http = { version = "0.6.6", features = ["fs", "timeout", "set-header"] }
