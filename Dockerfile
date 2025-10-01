@@ -6,7 +6,7 @@ COPY web .
 RUN npm run check
 RUN npm run build
 
-FROM docker.io/rust:1.89-bookworm AS bin
+FROM docker.io/rust:1.90-bookworm AS bin
 WORKDIR /build
 COPY . .
 RUN cargo build --release
