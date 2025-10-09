@@ -18,7 +18,7 @@ const headers = {
 
 const get = async <T, U>(
   url: string,
-  schema: z.Schema<T, z.ZodTypeDef, U>,
+  schema: z.Schema<T, U>,
   abort?: AbortSignal,
 ): Promise<T> => {
   const res = await fetch(url, {
@@ -99,7 +99,7 @@ const fetchTitles = async (
       const titles = await get(url, WikipediaTitlesSchema);
       for (const [id, title] of Object.entries(titles)) {
         storeTitle(id, title);
-        result[Number.parseInt(id)] = title;
+        result[Number.parseInt(id, 10)] = title;
       }
     }
   }

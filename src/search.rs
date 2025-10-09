@@ -20,7 +20,7 @@ pub struct Paths<'a> {
 impl Database {
     /// Get the shortest paths between two pages.
     #[allow(clippy::too_many_lines)]
-    pub fn get_shortest_paths(&self, source: PageId, target: PageId) -> Result<Paths> {
+    pub fn get_shortest_paths(&self, source: PageId, target: PageId) -> Result<Paths<'_>> {
         let txn = self.read_txn()?;
 
         // Follow any redirects and report whether they were redirects.

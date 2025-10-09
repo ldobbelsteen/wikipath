@@ -4,9 +4,9 @@ import { ToastContainer, toast } from "react-toastify";
 import { fetchShortestPaths } from "../api";
 import type { Database, Page, Paths } from "../schema";
 import { DatabaseSelect } from "./DatabaseSelect";
+import { Link } from "./generic/Link";
 import { PageForm } from "./PageForm";
 import { PathsGraph } from "./PathsGraph";
-import { Link } from "./generic/Link";
 import "react-toastify/dist/ReactToastify.css";
 
 const App = () => {

@@ -83,7 +83,7 @@ impl Database {
                 let mut txn = db.write_txn()?;
                 let size = batch.size();
 
-                log::debug!("inserting links from batch of size {}", size);
+                log::debug!("inserting links from batch of size {size}");
                 let mut total_insert_count = 0;
                 let mut append_insert_count = 0;
                 for (target, sources) in batch.drain() {
@@ -109,7 +109,7 @@ impl Database {
                     "nothing parsed from pagelinks table, possibly caused by schema changes"
                 ));
             }
-            log::info!("{} links found!", link_count);
+            log::info!("{link_count} links found!");
         }
 
         log::info!("generating outgoing table");

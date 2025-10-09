@@ -53,7 +53,7 @@ impl TableDumpFileMetadata {
                 }
             }
         }
-        Err(anyhow!("full name '{}' is not valid", full_name))
+        Err(anyhow!("full name '{full_name}' is not valid"))
     }
 
     /// Convert the metadata to a full filename.
@@ -107,7 +107,7 @@ impl TableDumpFiles {
                 match TableDumpFileMetadata::from_full_name_and_hash(full_name, hash.into()) {
                     Ok(md) => Some(md),
                     Err(e) => {
-                        log::debug!("skipping invalid dump file metadata: {}", e);
+                        log::debug!("skipping invalid dump file metadata: {e}");
                         None
                     }
                 }

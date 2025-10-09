@@ -4,20 +4,20 @@ version = "0.3.1"
 edition = "2021"
 
 [dependencies]
-anyhow = "1.0.97"
-axum = "0.8.4"
-clap = { version = "4.5.47", features = ["derive"] }
+anyhow = "1.0.100"
+axum = "0.8.6"
+clap = { version = "4.5.48", features = ["derive"] }
 data-encoding = "2.9.0"
-env_logger = "0.11.7"
-flate2 = "1.1.0"
+env_logger = "0.11.8"
+flate2 = "1.1.4"
 heed = "0.22.0"
 humantime = "2.3.0"
-log = "0.4.27"
-notify-debouncer-full = "0.5.0"
-regex = "1.11.1"
-reqwest = { version = "0.12.15", features = ["stream"] }
+log = "0.4.28"
+notify-debouncer-full = "0.6.0"
+regex = "1.11.3"
+reqwest = { version = "0.12.23", features = ["stream"] }
 ring = "0.17.14"
-serde = { version = "1.0.216", features = ["derive"] }
-tokio = { version = "1.46.1", features = ["full"] }
+serde = { version = "1.0.228", features = ["derive"] }
+tokio = { version = "1.47.1", features = ["full"] }
 tower = "0.5.2"
 tower-http = { version = "0.6.2", features = ["fs", "timeout", "set-header"] }

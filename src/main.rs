@@ -98,7 +98,7 @@ async fn main() -> Result<()> {
             let dumps_dir = Path::new(&dumps);
 
             for language_code in languages.split(',') {
-                log::info!("building '{}' database", language_code);
+                log::info!("building '{language_code}' database");
 
                 log::info!("getting dump information");
                 let metadatas = TableDumpFiles::get_metadatas(language_code, &date_code).await?;

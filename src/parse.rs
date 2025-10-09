@@ -69,11 +69,7 @@ impl TableDumpFiles {
             |result: &mut HashMap<String, PageId>, (id, title)| {
                 if let Some(prev) = result.insert(title, id) {
                     if prev != id {
-                        return Err(anyhow!(
-                            "two page ids for same title found: {} & {}",
-                            prev,
-                            id
-                        ));
+                        return Err(anyhow!("two page ids for same title found: {prev} & {id}"));
                     }
                 }
                 Ok(())
@@ -105,12 +101,12 @@ impl TableDumpFiles {
                     if let Some(id) = title_to_id.get(str) {
                         *id
                     } else {
-                        return Err(anyhow!("redirect target title '{}' not known", str));
+                        return Err(anyhow!("redirect target title '{str}' not known"));
                     }
                 };
 
                 if source == target {
-                    return Err(anyhow!("self-redirect found for page id {}", source));
+                    return Err(anyhow!("self-redirect found for page id {source}"));
                 }
 
                 Ok((source, target))
@@ -119,9 +115,7 @@ impl TableDumpFiles {
                 if let Some(prev) = result.insert(source, target) {
                     if prev != target {
                         return Err(anyhow!(
-                            "two redirect targets for same source found: {} & {}",
-                            prev,
-                            target
+                            "two redirect targets for same source found: {prev} & {target}"
                         ));
                     }
                 }
@@ -152,7 +146,7 @@ impl TableDumpFiles {
                     if let Some(id) = title_to_id.get(str) {
                         *id
                     } else {
-                        return Err(anyhow!("linktarget title '{}' not known", str));
+                        return Err(anyhow!("linktarget title '{str}' not known"));
                     }
                 };
 
@@ -162,9 +156,7 @@ impl TableDumpFiles {
                 if let Some(prev) = result.insert(linktarget, target) {
                     if prev != target {
                         return Err(anyhow!(
-                            "two page ids with same linktarget found: {} & {}",
-                            prev,
-                            target
+                            "two page ids with same linktarget found: {prev} & {target}"
                         ));
                     }
                 }
@@ -210,14 +202,14 @@ impl TableDumpFiles {
                 let target = if let Some(target) = linktarget_to_target.get(&linktarget) {
                     *target
                 } else {
-                    return Err(anyhow!("linktarget id {} not known", linktarget));
+                    return Err(anyhow!("linktarget id {linktarget} not known"));
                 };
 
                 let source = *redirects.get(&source).unwrap_or(&source);
                 let target = *redirects.get(&target).unwrap_or(&target);
 
                 if source == target {
-                    return Err(anyhow!("self-link found for page id {}", source));
+                    return Err(anyhow!("self-link found for page id {source}"));
                 }
 
                 Ok((source, target))
@@ -282,11 +274,7 @@ fn sliding_regex_file<
 
     loop {
         // Copy end of previous chunk to start of current chunk.
-        let overlap_start = if prev_chunk.end >= max_match_size {
-            prev_chunk.end - max_match_size
-        } else {
-            0
-        };
+        let overlap_start = prev_chunk.end.saturating_sub(max_match_size);
         let overlap_end = prev_chunk.end;
         let overlap = overlap_end - overlap_start;
         cur_chunk.data[..overlap].copy_from_slice(&prev_chunk.data[overlap_start..overlap_end]);
@@ -306,7 +294,7 @@ fn sliding_regex_file<
                 }
                 Err(e) => {
                     // NOTE: these happen often and can be ignored
-                    log::trace!("regex match extraction failed: {}", e);
+                    log::trace!("regex match extraction failed: {e}");
                 }
             }
         }

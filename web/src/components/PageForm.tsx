@@ -4,9 +4,9 @@ import type { Database, Page } from "../schema";
 import LoadingBlack from "../static/loading-black.svg";
 import LoadingWhite from "../static/loading-white.svg";
 import Swap from "../static/swap.svg";
-import { PageSearch, type SearchState, defaultSearchState } from "./PageSearch";
 import { Button } from "./generic/Button";
 import { InputImage } from "./generic/InputImage";
+import { defaultSearchState, PageSearch, type SearchState } from "./PageSearch";
 
 export const PageForm = (props: {
   database: Database;

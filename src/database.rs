@@ -40,7 +40,7 @@ impl Metadata {
                 }
             }
         }
-        Err(anyhow!("database name '{}' is not valid", s))
+        Err(anyhow!("database name '{s}' is not valid"))
     }
 
     /// Create name containing all database metadata.
