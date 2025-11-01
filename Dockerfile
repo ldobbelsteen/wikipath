@@ -1,4 +1,4 @@
-FROM docker.io/node:24-alpine AS web
+FROM docker.io/node:25-alpine AS web
 WORKDIR /build
 COPY web/package*.json .
 RUN npm ci
