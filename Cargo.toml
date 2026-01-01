@@ -12,7 +12,7 @@ env_logger = "0.11.8"
 flate2 = "1.1.4"
 heed = "0.22.0"
 humantime = "2.3.0"
-log = "0.4.28"
+log = "0.4.29"
 notify-debouncer-full = "0.6.0"
 regex = "1.11.3"
 reqwest = { version = "0.12.23", features = ["stream"] }
