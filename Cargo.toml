@@ -9,7 +9,7 @@ axum = "0.8.6"
 clap = { version = "4.5.48", features = ["derive"] }
 data-encoding = "2.9.0"
 env_logger = "0.11.8"
-flate2 = "1.1.4"
+flate2 = "1.1.5"
 heed = "0.22.0"
 humantime = "2.3.0"
 log = "0.4.28"
