@@ -200,7 +200,10 @@ pub async fn serve(databases_dir: &Path, web_dir: &Path, listening_port: u16) ->
             "/api/shortest_paths",
             get(shortest_paths_handler).layer(
                 ServiceBuilder::new()
-                    .layer(TimeoutLayer::new(Duration::from_secs(10))) // timeout after 10 seconds to prevent long-running searches
+                    .layer(TimeoutLayer::with_status_code(
+                        StatusCode::REQUEST_TIMEOUT,
+                        Duration::from_secs(10),
+                    )) // timeout to prevent long-running searches
                     .layer(Extension(databases.clone())), // give access to the databases
             ),
         )
