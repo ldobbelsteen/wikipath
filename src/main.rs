@@ -26,10 +26,10 @@ struct Arguments {
 enum Action {
     /// Build Wikipath database(s).
     Build {
-        /// Language(s) to build, separated by commas. Use ISO codes from <https://en.wikipedia.org/wiki/List_of_Wikipedias>.
+        /// Language(s) to build, separated by commas. Use ISO codes from https://en.wikipedia.org/wiki/List_of_Wikipedias.
         #[clap(long, default_value = "en")]
         languages: String,
-        /// Date of the dump to build the database from. Use the dates from e.g. <https://dumps.wikimedia.org/enwiki>.
+        /// Date of the dump to build the database from. Use the dates from e.g. https://dumps.wikimedia.org/enwiki.
         #[clap(long, default_value = "latest")]
         date: String,
         /// Directory to output database(s) to.

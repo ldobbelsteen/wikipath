@@ -44,7 +44,8 @@ impl IncomingLinkBatch {
 }
 
 impl TableDumpFiles {
-    /// Parse the page table dump file and return a mapping from page titles to page ids.
+    /// Parse the page table dump file and return a mapping from page titles to page ids for each
+    /// namespace.
     pub fn parse_page_table(&self) -> Result<HashMap<String, PageId>> {
         sliding_regex_file(
             self.page.as_path(),

@@ -7,14 +7,16 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
-/// Representation of a page id. The database schema uses 10-digit unsigned integers (<https://www.mediawiki.org/wiki/Manual:Pagelinks_table>).
-/// A u32 cannot represent all values a 10-digit integer can, but since not that many Wikipedia articles exist for any language, this should
-/// be sufficient and saves memory and disk space.
+/// Representation of a page id. The database schema uses 10-digit unsigned integers. A u32 cannot
+/// represent all values a 10-digit integer can, but since not that many Wikipedia articles exist
+/// for any language, this should be sufficient and saves memory and disk space.
+/// See: https://www.mediawiki.org/wiki/Manual:Pagelinks_table
 pub type PageId = u32;
 
-/// Representation of a linktarget table id. The database schema uses 20-digit unsigned integers (<https://www.mediawiki.org/wiki/Manual:Linktarget_table>).
-/// A u64 cannot represent all values a 20-digit integer can, but since not that many Wikipedia articles exist for any language, this should
-/// be sufficient and saves memory and disk space.
+/// Representation of a linktarget table id. The database schema uses 20-digit unsigned integers.
+/// A u64 cannot represent all values a 20-digit integer can, but since not that many Wikipedia
+/// articles exist for any language, this should be sufficient and saves memory and disk space.
+/// See https://www.mediawiki.org/wiki/Manual:Linktarget_table
 pub type LinkTargetId = u64;
 
 /// A struct containing metadata about a database. The language code represents
@@ -80,7 +82,8 @@ struct Tables {
 }
 
 impl Database {
-    /// Open a database at a path. Returns an error if the database name in the path is not correctly formatted.
+    /// Open a database at a path. Returns an error if the database name in the path is not
+    /// correctly formatted.
     pub fn open(path: &Path, mode: Mode) -> Result<Self> {
         match mode {
             Mode::Serve => {
@@ -204,7 +207,8 @@ impl Database {
             .unwrap_or(Vec::new()))
     }
 
-    /// Insert a redirect into the database. Returns an error if the source page already has a redirect.
+    /// Insert a redirect into the database. Returns an error if the source page already has
+    /// a redirect.
     pub fn insert_redirect(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -218,8 +222,9 @@ impl Database {
     }
 
     /// Insert links into the database in the form of incoming links. If the target page already has
-    /// incoming links, the new links are added to its entry. Returns whether any previous links were
-    /// present already (which makes this operation relatively expensive and is thus really not desirable).
+    /// incoming links, the new links are added to its entry. Returns whether any previous links
+    /// were present already (which makes this operation relatively expensive and is thus really not
+    /// desirable).
     pub fn insert_links_incoming(
         &self,
         txn: &mut heed::RwTxn<'_>,
