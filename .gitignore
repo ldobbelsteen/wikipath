@@ -1,3 +1,4 @@
 /databases/
 /dumps/
 /target/
+.DS_Store
