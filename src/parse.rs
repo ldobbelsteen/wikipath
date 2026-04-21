@@ -53,8 +53,13 @@ impl TableDumpFiles {
             &Regex::new(
                 r"\((\d+),(-?\d+),'(.*?)',[01],[01],0\.\d+,'\d*',(?:'\d*'|NULL),\d+,\d+,(?:'.*?'|NULL),(?:'.*?'|NULL)\)",
             )?,
-            // Worst-case UTF-8 SQL dump row size ≈ numbers (~79B) + strings (~350B) + syntax (~25B)
-            454,
+            // Conservative upper bound for one `page` tuple in the SQL dump.
+            // Computed worst-case is ~757 bytes:
+            // - numeric/text fixed fields + delimiters: ~107 bytes
+            // - `page_title` varbinary(255), SQL-escaped and quoted: up to ~512 bytes
+            // - `page_content_model` varbinary(32), escaped+quoted: up to ~66 bytes
+            // - `page_lang` varbinary(35), escaped+quoted: up to ~72 bytes
+            800,
             |caps| -> Result<(PageId, PageNamespaceId, String)> {
                 let id = {
                     let m = caps.get(1).unwrap(); // Capture 1 always participates in the match
@@ -99,8 +104,13 @@ impl TableDumpFiles {
             self.redirect.as_path(),
             // Based on https://www.mediawiki.org/wiki/Manual:Redirect_table
             &Regex::new(r"\((\d+),(-?\d+),'(.*?)',(?:'.*?'|NULL),(?:'.*?'|NULL)\)")?,
-            // Worst-case UTF-8 SQL dump row size ≈ numbers (~21B) + strings (~542B) + syntax (~25B)
-            588,
+            // Conservative upper bound for one `redirect` tuple in the SQL dump.
+            // Computed worst-case is ~1117 bytes:
+            // - fixed numeric fields + delimiters: ~27 bytes
+            // - `rd_title` varbinary(255), SQL-escaped and quoted: up to ~512 bytes
+            // - `rd_interwiki` varbinary(32), escaped+quoted (or NULL): up to ~66 bytes
+            // - `rd_fragment` varbinary(255), escaped+quoted (or NULL): up to ~512 bytes
+            1200,
             |caps| -> Result<(PageId, PageId)> {
                 let source = {
                     let m = caps.get(1).unwrap(); // Capture 1 always participates in the match
@@ -158,8 +168,13 @@ impl TableDumpFiles {
             self.linktarget.as_path(),
             // Based on https://www.mediawiki.org/wiki/Manual:Linktarget_table
             &Regex::new(r"\((\d+),(-?\d+),'(.*?)'\)")?,
-            // Worst-case UTF-8 SQL dump row size ≈ numbers (~31B) + strings (~255B) + syntax (~22B)
-            308,
+            // Conservative upper bound for one `linktarget` tuple in the SQL dump.
+            // Computed worst-case is ~549 bytes:
+            // - `lt_id` bigint unsigned max textual width: 20 bytes
+            // - `lt_namespace` int signed min textual width: 11 bytes
+            // - `lt_title` varbinary(255), SQL-escaped and quoted: up to ~512 bytes
+            // - tuple syntax (parens, commas, quotes): 6 bytes
+            600,
             |caps| -> Result<(LinkTargetId, PageId)> {
                 let linktarget = {
                     let m = caps.get(1).unwrap(); // Capture 1 always participates in the match
@@ -225,8 +240,13 @@ impl TableDumpFiles {
             self.pagelinks.as_path(),
             // Based on https://www.mediawiki.org/wiki/Manual:Pagelinks_table
             &Regex::new(r"\((\d+),(?:-?\d+),(\d+)\)")?,
-            // Worst-case UTF-8 SQL dump row size ≈ numbers (~41B) + strings (~0B) + syntax (~22B)
-            63,
+            // Conservative upper bound for one `pagelinks` tuple in the SQL dump.
+            // Computed worst-case is ~45 bytes:
+            // - `pl_from` int unsigned max textual width: 10 bytes
+            // - `pl_from_namespace` int signed min textual width: 11 bytes
+            // - `pl_target_id` bigint unsigned max textual width: 20 bytes
+            // - tuple syntax (parens + commas): 4 bytes
+            64,
             |caps| -> Result<(PageId, PageId)> {
                 let source = {
                     let m = caps.get(1).unwrap(); // Capture 1 always participates in the match
