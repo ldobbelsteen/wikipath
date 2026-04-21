@@ -54,17 +54,83 @@ const LINKTARGET_MAX_MATCH_SIZE_BYTES: usize = 600;
 // Configured at 64 for safety margin across dump quirks.
 const PAGELINKS_MAX_MATCH_SIZE_BYTES: usize = 64;
 
+const UNSIGNED_INT: &str = r"\d+";
+const SIGNED_INT: &str = r"-?\d+";
+const SQL_ESCAPED_TEXT: &str = r"((?:[^'\\]|\\.)*)";
+const SQL_ESCAPED_TEXT_OR_NULL: &str = r"(?:'(?:[^'\\]|\\.)*'|NULL)";
+const ZERO_TO_ONE_FLOAT: &str = r"(?:0(?:\.\d+)?|1(?:\.0+)?|\.\d+)";
+
 // Based on https://www.mediawiki.org/wiki/Manual:Page_table
-const PAGE_ROW_PATTERN: &str = r"\((\d+),(-?\d+),'((?:[^'\\]|\\.)*)',[01],[01],(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?,'\d*',(?:'\d*'|NULL),\d+,\d+,(?:'(?:[^'\\]|\\.)*'|NULL),(?:'(?:[^'\\]|\\.)*'|NULL)\)";
+fn page_row_pattern() -> String {
+    [
+        r"\((",
+        UNSIGNED_INT,
+        r"),(",
+        SIGNED_INT,
+        r"),'",
+        SQL_ESCAPED_TEXT,
+        r"',[01],[01],",
+        ZERO_TO_ONE_FLOAT,
+        r",'\d*',(?:'\d*'|NULL),",
+        UNSIGNED_INT,
+        r",",
+        UNSIGNED_INT,
+        r",",
+        SQL_ESCAPED_TEXT_OR_NULL,
+        ",",
+        SQL_ESCAPED_TEXT_OR_NULL,
+        r"\)",
+    ]
+    .concat()
+}
+
 // Based on https://www.mediawiki.org/wiki/Manual:Redirect_table
-const REDIRECT_ROW_PATTERN: &str =
-    r"\((\d+),(-?\d+),'((?:[^'\\]|\\.)*)',(?:'(?:[^'\\]|\\.)*'|NULL),(?:'(?:[^'\\]|\\.)*'|NULL)\)";
+fn redirect_row_pattern() -> String {
+    [
+        r"\((",
+        UNSIGNED_INT,
+        r"),(",
+        SIGNED_INT,
+        r"),'",
+        SQL_ESCAPED_TEXT,
+        r"',",
+        SQL_ESCAPED_TEXT_OR_NULL,
+        ",",
+        SQL_ESCAPED_TEXT_OR_NULL,
+        r"\)",
+    ]
+    .concat()
+}
+
 // Based on https://www.mediawiki.org/wiki/Manual:Linktarget_table
-const LINKTARGET_ROW_PATTERN: &str = r"\((\d+),(-?\d+),'((?:[^'\\]|\\.)*)'\)";
+fn linktarget_row_pattern() -> String {
+    [
+        r"\((",
+        UNSIGNED_INT,
+        r"),(",
+        SIGNED_INT,
+        r"),'",
+        SQL_ESCAPED_TEXT,
+        r"'\)",
+    ]
+    .concat()
+}
+
 // Based on https://www.mediawiki.org/wiki/Manual:Pagelinks_table
 // NOTE: despite newer schema docs listing `(pl_from, pl_target_id, pl_from_namespace)`,
 // the dumps we parse are observed as `(pl_from, pl_from_namespace, pl_target_id)`.
-const PAGELINKS_ROW_PATTERN: &str = r"\((\d+),(?:-?\d+),(\d+)\)";
+fn pagelinks_row_pattern() -> String {
+    [
+        r"\((",
+        UNSIGNED_INT,
+        r"),(?:",
+        SIGNED_INT,
+        r"),(",
+        UNSIGNED_INT,
+        r")\)",
+    ]
+    .concat()
+}
 
 enum ParseSkipReason {
     MissingTargetTitle,
@@ -113,7 +179,7 @@ impl TableDumpFiles {
     pub fn parse_page_table(&self) -> Result<HashMap<PageNamespaceId, HashMap<String, PageId>>> {
         sliding_regex_file(
             self.page.as_path(),
-            &Regex::new(PAGE_ROW_PATTERN)?,
+            &Regex::new(&page_row_pattern())?,
             PAGE_MAX_MATCH_SIZE_BYTES,
             |caps| -> Result<ExtractMatch<(PageId, PageNamespaceId, String)>> {
                 let id = {
@@ -157,7 +223,7 @@ impl TableDumpFiles {
     ) -> Result<HashMap<PageId, PageId>> {
         sliding_regex_file(
             self.redirect.as_path(),
-            &Regex::new(REDIRECT_ROW_PATTERN)?,
+            &Regex::new(&redirect_row_pattern())?,
             REDIRECT_MAX_MATCH_SIZE_BYTES,
             |caps| -> Result<ExtractMatch<(PageId, PageId)>> {
                 let source = {
@@ -212,7 +278,7 @@ impl TableDumpFiles {
     ) -> Result<HashMap<LinkTargetId, PageId>> {
         sliding_regex_file(
             self.linktarget.as_path(),
-            &Regex::new(LINKTARGET_ROW_PATTERN)?,
+            &Regex::new(&linktarget_row_pattern())?,
             LINKTARGET_MAX_MATCH_SIZE_BYTES,
             |caps| -> Result<ExtractMatch<(LinkTargetId, PageId)>> {
                 let linktarget = {
@@ -275,7 +341,7 @@ impl TableDumpFiles {
     ) -> Result<()> {
         let mut remaining_batch = sliding_regex_file(
             self.pagelinks.as_path(),
-            &Regex::new(PAGELINKS_ROW_PATTERN)?,
+            &Regex::new(&pagelinks_row_pattern())?,
             PAGELINKS_MAX_MATCH_SIZE_BYTES,
             |caps| -> Result<ExtractMatch<(PageId, PageId)>> {
                 let source = {
@@ -424,7 +490,7 @@ fn sliding_regex_file<
                     ParseSkipReason::SelfLink => {
                         stats.skipped_self_link += 1;
                     }
-                }
+                },
                 Err(e) => {
                     stats.extract_malformed += 1;
                     log::trace!("regex match extraction malformed: {e}");
@@ -511,15 +577,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn page_regex_matches_multiple_valid_number_formats() {
-        let regex = Regex::new(PAGE_ROW_PATTERN).unwrap();
+    fn page_regex_matches_valid_zero_to_one_float_formats() {
+        let regex = Regex::new(&page_row_pattern()).unwrap();
 
         let rows: &[&[u8]] = &[
             br"(123,-1,'Title',1,0,0.123,'20240102030405',NULL,456,789,'wikitext','en')",
-            br"(123,-1,'Title',1,0,1,'20240102030405','20240102030405',456,789,NULL,NULL)",
+            br"(123,-1,'Title',1,0,0,'20240102030405','20240102030405',456,789,NULL,NULL)",
             br"(123,-1,'Title',1,0,.5,'20240102030405',NULL,456,789,NULL,NULL)",
-            br"(123,-1,'Title',1,0,1e-5,'20240102030405',NULL,456,789,NULL,NULL)",
-            br"(123,-1,'Title',1,0,1.25E+10,'20240102030405',NULL,456,789,NULL,NULL)",
+            br"(123,-1,'Title',1,0,0.0,'20240102030405',NULL,456,789,NULL,NULL)",
+            br"(123,-1,'Title',1,0,1,'20240102030405',NULL,456,789,NULL,NULL)",
+            br"(123,-1,'Title',1,0,1.0,'20240102030405',NULL,456,789,NULL,NULL)",
+            br"(123,-1,'Title',1,0,1.0000,'20240102030405',NULL,456,789,NULL,NULL)",
         ];
 
         for row in rows {
@@ -529,7 +597,7 @@ mod tests {
 
     #[test]
     fn page_regex_matches_escaped_title_and_captures_core_fields() {
-        let regex = Regex::new(PAGE_ROW_PATTERN).unwrap();
+        let regex = Regex::new(&page_row_pattern()).unwrap();
 
         let row = br"(123,-1,'A\'B\\C',1,0,0.123,'20240102030405',NULL,456,789,'wikitext','en')";
         let caps = regex.captures(row).unwrap();
@@ -540,21 +608,28 @@ mod tests {
 
     #[test]
     fn page_regex_rejects_invalid_quote_escaping() {
-        let regex = Regex::new(PAGE_ROW_PATTERN).unwrap();
+        let regex = Regex::new(&page_row_pattern()).unwrap();
         let row = br"(123,-1,'A''B',1,0,0.123,'20240102030405',NULL,456,789,NULL,NULL)";
         assert!(!regex.is_match(row));
     }
 
     #[test]
     fn page_regex_rejects_invalid_random_number() {
-        let regex = Regex::new(PAGE_ROW_PATTERN).unwrap();
+        let regex = Regex::new(&page_row_pattern()).unwrap();
         let row = br"(123,-1,'Title',1,0,1e,'20240102030405',NULL,456,789,NULL,NULL)";
         assert!(!regex.is_match(row));
     }
 
     #[test]
+    fn page_regex_rejects_scientific_random_number() {
+        let regex = Regex::new(&page_row_pattern()).unwrap();
+        let row = br"(123,-1,'Title',1,0,1e-5,'20240102030405',NULL,456,789,NULL,NULL)";
+        assert!(!regex.is_match(row));
+    }
+
+    #[test]
     fn page_regex_matches_null_and_non_null_tail_fields() {
-        let regex = Regex::new(PAGE_ROW_PATTERN).unwrap();
+        let regex = Regex::new(&page_row_pattern()).unwrap();
         let with_nulls = br"(1,0,'T',0,0,0.1,'20240102030405',NULL,1,1,NULL,NULL)";
         let with_values =
             br"(1,0,'T',0,0,0.1,'20240102030405','20240102030405',1,1,'json','zh-hans')";
@@ -564,7 +639,7 @@ mod tests {
 
     #[test]
     fn redirect_regex_matches_with_null_optional_fields() {
-        let regex = Regex::new(REDIRECT_ROW_PATTERN).unwrap();
+        let regex = Regex::new(&redirect_row_pattern()).unwrap();
         let row = br"(42,0,'Target',NULL,NULL)";
         let caps = regex.captures(row).unwrap();
         assert_eq!(caps.get(1).unwrap().as_bytes(), b"42");
@@ -574,7 +649,7 @@ mod tests {
 
     #[test]
     fn redirect_regex_matches_escaped_literals() {
-        let regex = Regex::new(REDIRECT_ROW_PATTERN).unwrap();
+        let regex = Regex::new(&redirect_row_pattern()).unwrap();
         let row = br"(42,0,'Foo\'bar','w\:en','Section\\2')";
         let caps = regex.captures(row).unwrap();
         assert_eq!(caps.get(1).unwrap().as_bytes(), b"42");
@@ -584,14 +659,14 @@ mod tests {
 
     #[test]
     fn redirect_regex_rejects_unescaped_quote_in_title() {
-        let regex = Regex::new(REDIRECT_ROW_PATTERN).unwrap();
+        let regex = Regex::new(&redirect_row_pattern()).unwrap();
         let row = br"(42,0,'Foo'bar',NULL,NULL)";
         assert!(!regex.is_match(row));
     }
 
     #[test]
     fn linktarget_regex_matches_bigint_id_and_escaped_title() {
-        let regex = Regex::new(LINKTARGET_ROW_PATTERN).unwrap();
+        let regex = Regex::new(&linktarget_row_pattern()).unwrap();
         let row = br"(18446744073709551615,-2,'Talk\:\\Main\'Page')";
         let caps = regex.captures(row).unwrap();
         assert_eq!(caps.get(1).unwrap().as_bytes(), b"18446744073709551615");
@@ -601,14 +676,14 @@ mod tests {
 
     #[test]
     fn linktarget_regex_rejects_missing_quotes() {
-        let regex = Regex::new(LINKTARGET_ROW_PATTERN).unwrap();
+        let regex = Regex::new(&linktarget_row_pattern()).unwrap();
         let row = br"(10,0,NoQuotes)";
         assert!(!regex.is_match(row));
     }
 
     #[test]
     fn pagelinks_regex_uses_observed_dump_order() {
-        let regex = Regex::new(PAGELINKS_ROW_PATTERN).unwrap();
+        let regex = Regex::new(&pagelinks_row_pattern()).unwrap();
         let row = br"(11,-7,22)";
         let caps = regex.captures(row).unwrap();
         assert_eq!(caps.get(1).unwrap().as_bytes(), b"11");
@@ -617,14 +692,14 @@ mod tests {
 
     #[test]
     fn pagelinks_regex_accepts_positive_namespace() {
-        let regex = Regex::new(PAGELINKS_ROW_PATTERN).unwrap();
+        let regex = Regex::new(&pagelinks_row_pattern()).unwrap();
         let row = br"(11,7,22)";
         assert!(regex.is_match(row));
     }
 
     #[test]
     fn pagelinks_regex_rejects_wrong_column_order_shape() {
-        let regex = Regex::new(PAGELINKS_ROW_PATTERN).unwrap();
+        let regex = Regex::new(&pagelinks_row_pattern()).unwrap();
         let row = br"(11,22,-7)";
         assert!(!regex.is_match(row));
     }
