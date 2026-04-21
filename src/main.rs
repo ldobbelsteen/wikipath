@@ -41,6 +41,9 @@ enum Action {
         /// After building, cleanup existing dump files and database of the same language but with a different date code.
         #[clap(long, default_value = "true")]
         cleanup: bool,
+        /// Build even if a database with the same language/date already exists.
+        #[clap(long, default_value = "false")]
+        force: bool,
     },
     /// Serve Wikipath database(s).
     Serve {
@@ -92,6 +95,7 @@ async fn main() -> Result<()> {
             databases,
             dumps,
             cleanup,
+            force,
         } => {
             let date_code = date;
             let databases_dir = Path::new(&databases);
@@ -113,8 +117,13 @@ async fn main() -> Result<()> {
 
                 let final_path = databases_dir.join(metadata.to_name());
                 if Path::new(&final_path).exists() {
-                    log::warn!("database already exists, skipping");
-                    continue;
+                    if force {
+                        log::warn!("database already exists, removing due to force flag");
+                        std::fs::remove_file(&final_path)?;
+                    } else {
+                        log::warn!("database already exists, skipping");
+                        continue;
+                    }
                 }
 
                 let start = Instant::now();
