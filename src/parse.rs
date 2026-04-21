@@ -15,6 +15,57 @@ use std::{
 const CHUNK_SIZE_BYTES: usize = 1024 * 1024; // 1MB
 const MAX_LINK_BATCH_SIZE: usize = 4_000_000;
 
+// Conservative upper bound for one `page` tuple in the SQL dump.
+// Assumes mysqldump-style escaping (varbinary fields can approach 2x expansion).
+// Computed worst-case is ~757 bytes:
+// - numeric/text fixed fields + delimiters: ~107 bytes
+// - `page_title` varbinary(255), SQL-escaped and quoted: up to ~512 bytes
+// - `page_content_model` varbinary(32), escaped+quoted: up to ~66 bytes
+// - `page_lang` varbinary(35), escaped+quoted: up to ~72 bytes
+// Configured at 800 for safety margin across dump quirks.
+const PAGE_MAX_MATCH_SIZE_BYTES: usize = 800;
+
+// Conservative upper bound for one `redirect` tuple in the SQL dump.
+// Assumes mysqldump-style escaping (varbinary fields can approach 2x expansion).
+// Computed worst-case is ~1117 bytes:
+// - fixed numeric fields + delimiters: ~27 bytes
+// - `rd_title` varbinary(255), SQL-escaped and quoted: up to ~512 bytes
+// - `rd_interwiki` varbinary(32), escaped+quoted (or NULL): up to ~66 bytes
+// - `rd_fragment` varbinary(255), escaped+quoted (or NULL): up to ~512 bytes
+// Configured at 1200 for safety margin across dump quirks.
+const REDIRECT_MAX_MATCH_SIZE_BYTES: usize = 1200;
+
+// Conservative upper bound for one `linktarget` tuple in the SQL dump.
+// Assumes mysqldump-style escaping (`lt_title` can approach 2x expansion).
+// Computed worst-case is ~549 bytes:
+// - `lt_id` bigint unsigned max textual width: 20 bytes
+// - `lt_namespace` int signed min textual width: 11 bytes
+// - `lt_title` varbinary(255), SQL-escaped and quoted: up to ~512 bytes
+// - tuple syntax (parens, commas, quotes): 6 bytes
+// Configured at 600 for safety margin across dump quirks.
+const LINKTARGET_MAX_MATCH_SIZE_BYTES: usize = 600;
+
+// Conservative upper bound for one `pagelinks` tuple in the SQL dump.
+// Computed worst-case is ~45 bytes:
+// - `pl_from` int unsigned max textual width: 10 bytes
+// - `pl_from_namespace` int signed min textual width: 11 bytes
+// - `pl_target_id` bigint unsigned max textual width: 20 bytes
+// - tuple syntax (parens + commas): 4 bytes
+// Configured at 64 for safety margin across dump quirks.
+const PAGELINKS_MAX_MATCH_SIZE_BYTES: usize = 64;
+
+// Based on https://www.mediawiki.org/wiki/Manual:Page_table
+const PAGE_ROW_PATTERN: &str = r"\((\d+),(-?\d+),'((?:[^'\\]|\\.)*)',[01],[01],(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?,'\d*',(?:'\d*'|NULL),\d+,\d+,(?:'(?:[^'\\]|\\.)*'|NULL),(?:'(?:[^'\\]|\\.)*'|NULL)\)";
+// Based on https://www.mediawiki.org/wiki/Manual:Redirect_table
+const REDIRECT_ROW_PATTERN: &str =
+    r"\((\d+),(-?\d+),'((?:[^'\\]|\\.)*)',(?:'(?:[^'\\]|\\.)*'|NULL),(?:'(?:[^'\\]|\\.)*'|NULL)\)";
+// Based on https://www.mediawiki.org/wiki/Manual:Linktarget_table
+const LINKTARGET_ROW_PATTERN: &str = r"\((\d+),(-?\d+),'((?:[^'\\]|\\.)*)'\)";
+// Based on https://www.mediawiki.org/wiki/Manual:Pagelinks_table
+// NOTE: despite newer schema docs listing `(pl_from, pl_target_id, pl_from_namespace)`,
+// the dumps we parse are observed as `(pl_from, pl_from_namespace, pl_target_id)`.
+const PAGELINKS_ROW_PATTERN: &str = r"\((\d+),(?:-?\d+),(\d+)\)";
+
 /// Struct representing a batch of links stored in the incoming format.
 #[derive(Debug, Default)]
 pub struct IncomingLinkBatch {
@@ -49,19 +100,8 @@ impl TableDumpFiles {
     pub fn parse_page_table(&self) -> Result<HashMap<PageNamespaceId, HashMap<String, PageId>>> {
         sliding_regex_file(
             self.page.as_path(),
-            // Based on https://www.mediawiki.org/wiki/Manual:Page_table
-            &Regex::new(
-                r"\((\d+),(-?\d+),'((?:[^'\\]|\\.)*)',[01],[01],(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?,'\d*',(?:'\d*'|NULL),\d+,\d+,(?:'(?:[^'\\]|\\.)*'|NULL),(?:'(?:[^'\\]|\\.)*'|NULL)\)",
-            )?,
-            // Conservative upper bound for one `page` tuple in the SQL dump.
-            // Assumes mysqldump-style escaping (varbinary fields can approach 2x expansion).
-            // Computed worst-case is ~757 bytes:
-            // - numeric/text fixed fields + delimiters: ~107 bytes
-            // - `page_title` varbinary(255), SQL-escaped and quoted: up to ~512 bytes
-            // - `page_content_model` varbinary(32), escaped+quoted: up to ~66 bytes
-            // - `page_lang` varbinary(35), escaped+quoted: up to ~72 bytes
-            // Configured at 800 for safety margin across dump quirks.
-            800,
+            &Regex::new(PAGE_ROW_PATTERN)?,
+            PAGE_MAX_MATCH_SIZE_BYTES,
             |caps| -> Result<(PageId, PageNamespaceId, String)> {
                 let id = {
                     let m = caps.get(1).unwrap(); // Capture 1 always participates in the match
@@ -104,19 +144,8 @@ impl TableDumpFiles {
     ) -> Result<HashMap<PageId, PageId>> {
         sliding_regex_file(
             self.redirect.as_path(),
-            // Based on https://www.mediawiki.org/wiki/Manual:Redirect_table
-            &Regex::new(
-                r"\((\d+),(-?\d+),'((?:[^'\\]|\\.)*)',(?:'(?:[^'\\]|\\.)*'|NULL),(?:'(?:[^'\\]|\\.)*'|NULL)\)",
-            )?,
-            // Conservative upper bound for one `redirect` tuple in the SQL dump.
-            // Assumes mysqldump-style escaping (varbinary fields can approach 2x expansion).
-            // Computed worst-case is ~1117 bytes:
-            // - fixed numeric fields + delimiters: ~27 bytes
-            // - `rd_title` varbinary(255), SQL-escaped and quoted: up to ~512 bytes
-            // - `rd_interwiki` varbinary(32), escaped+quoted (or NULL): up to ~66 bytes
-            // - `rd_fragment` varbinary(255), escaped+quoted (or NULL): up to ~512 bytes
-            // Configured at 1200 for safety margin across dump quirks.
-            1200,
+            &Regex::new(REDIRECT_ROW_PATTERN)?,
+            REDIRECT_MAX_MATCH_SIZE_BYTES,
             |caps| -> Result<(PageId, PageId)> {
                 let source = {
                     let m = caps.get(1).unwrap(); // Capture 1 always participates in the match
@@ -172,17 +201,8 @@ impl TableDumpFiles {
     ) -> Result<HashMap<LinkTargetId, PageId>> {
         sliding_regex_file(
             self.linktarget.as_path(),
-            // Based on https://www.mediawiki.org/wiki/Manual:Linktarget_table
-            &Regex::new(r"\((\d+),(-?\d+),'((?:[^'\\]|\\.)*)'\)")?,
-            // Conservative upper bound for one `linktarget` tuple in the SQL dump.
-            // Assumes mysqldump-style escaping (`lt_title` can approach 2x expansion).
-            // Computed worst-case is ~549 bytes:
-            // - `lt_id` bigint unsigned max textual width: 20 bytes
-            // - `lt_namespace` int signed min textual width: 11 bytes
-            // - `lt_title` varbinary(255), SQL-escaped and quoted: up to ~512 bytes
-            // - tuple syntax (parens, commas, quotes): 6 bytes
-            // Configured at 600 for safety margin across dump quirks.
-            600,
+            &Regex::new(LINKTARGET_ROW_PATTERN)?,
+            LINKTARGET_MAX_MATCH_SIZE_BYTES,
             |caps| -> Result<(LinkTargetId, PageId)> {
                 let linktarget = {
                     let m = caps.get(1).unwrap(); // Capture 1 always participates in the match
@@ -246,18 +266,8 @@ impl TableDumpFiles {
     ) -> Result<()> {
         let mut remaining_batch = sliding_regex_file(
             self.pagelinks.as_path(),
-            // Based on https://www.mediawiki.org/wiki/Manual:Pagelinks_table
-            // NOTE: despite newer schema docs listing `(pl_from, pl_target_id, pl_from_namespace)`,
-            // the dumps we parse are observed as `(pl_from, pl_from_namespace, pl_target_id)`.
-            &Regex::new(r"\((\d+),(?:-?\d+),(\d+)\)")?,
-            // Conservative upper bound for one `pagelinks` tuple in the SQL dump.
-            // Computed worst-case is ~45 bytes:
-            // - `pl_from` int unsigned max textual width: 10 bytes
-            // - `pl_from_namespace` int signed min textual width: 11 bytes
-            // - `pl_target_id` bigint unsigned max textual width: 20 bytes
-            // - tuple syntax (parens + commas): 4 bytes
-            // Configured at 64 for safety margin across dump quirks.
-            64,
+            &Regex::new(PAGELINKS_ROW_PATTERN)?,
+            PAGELINKS_MAX_MATCH_SIZE_BYTES,
             |caps| -> Result<(PageId, PageId)> {
                 let source = {
                     let m = caps.get(1).unwrap(); // Capture 1 always participates in the match
@@ -407,4 +417,167 @@ pub fn cleanup_redirects(mut redirs: HashMap<PageId, PageId>) -> HashMap<PageId,
     }
 
     redirs
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn page_regex_matches_multiple_valid_number_formats() {
+        let regex = Regex::new(PAGE_ROW_PATTERN).unwrap();
+
+        let rows: &[&[u8]] = &[
+            br"(123,-1,'Title',1,0,0.123,'20240102030405',NULL,456,789,'wikitext','en')",
+            br"(123,-1,'Title',1,0,1,'20240102030405','20240102030405',456,789,NULL,NULL)",
+            br"(123,-1,'Title',1,0,.5,'20240102030405',NULL,456,789,NULL,NULL)",
+            br"(123,-1,'Title',1,0,1e-5,'20240102030405',NULL,456,789,NULL,NULL)",
+            br"(123,-1,'Title',1,0,1.25E+10,'20240102030405',NULL,456,789,NULL,NULL)",
+        ];
+
+        for row in rows {
+            assert!(regex.is_match(row));
+        }
+    }
+
+    #[test]
+    fn page_regex_matches_escaped_title_and_captures_core_fields() {
+        let regex = Regex::new(PAGE_ROW_PATTERN).unwrap();
+
+        let row = br"(123,-1,'A\'B\\C',1,0,0.123,'20240102030405',NULL,456,789,'wikitext','en')";
+        let caps = regex.captures(row).unwrap();
+        assert_eq!(caps.get(1).unwrap().as_bytes(), b"123");
+        assert_eq!(caps.get(2).unwrap().as_bytes(), b"-1");
+        assert_eq!(caps.get(3).unwrap().as_bytes(), b"A\\'B\\\\C");
+    }
+
+    #[test]
+    fn page_regex_rejects_invalid_quote_escaping() {
+        let regex = Regex::new(PAGE_ROW_PATTERN).unwrap();
+        let row = br"(123,-1,'A''B',1,0,0.123,'20240102030405',NULL,456,789,NULL,NULL)";
+        assert!(!regex.is_match(row));
+    }
+
+    #[test]
+    fn page_regex_rejects_invalid_random_number() {
+        let regex = Regex::new(PAGE_ROW_PATTERN).unwrap();
+        let row = br"(123,-1,'Title',1,0,1e,'20240102030405',NULL,456,789,NULL,NULL)";
+        assert!(!regex.is_match(row));
+    }
+
+    #[test]
+    fn page_regex_matches_null_and_non_null_tail_fields() {
+        let regex = Regex::new(PAGE_ROW_PATTERN).unwrap();
+        let with_nulls = br"(1,0,'T',0,0,0.1,'20240102030405',NULL,1,1,NULL,NULL)";
+        let with_values =
+            br"(1,0,'T',0,0,0.1,'20240102030405','20240102030405',1,1,'json','zh-hans')";
+        assert!(regex.is_match(with_nulls));
+        assert!(regex.is_match(with_values));
+    }
+
+    #[test]
+    fn redirect_regex_matches_with_null_optional_fields() {
+        let regex = Regex::new(REDIRECT_ROW_PATTERN).unwrap();
+        let row = br"(42,0,'Target',NULL,NULL)";
+        let caps = regex.captures(row).unwrap();
+        assert_eq!(caps.get(1).unwrap().as_bytes(), b"42");
+        assert_eq!(caps.get(2).unwrap().as_bytes(), b"0");
+        assert_eq!(caps.get(3).unwrap().as_bytes(), b"Target");
+    }
+
+    #[test]
+    fn redirect_regex_matches_escaped_literals() {
+        let regex = Regex::new(REDIRECT_ROW_PATTERN).unwrap();
+        let row = br"(42,0,'Foo\'bar','w\:en','Section\\2')";
+        let caps = regex.captures(row).unwrap();
+        assert_eq!(caps.get(1).unwrap().as_bytes(), b"42");
+        assert_eq!(caps.get(2).unwrap().as_bytes(), b"0");
+        assert_eq!(caps.get(3).unwrap().as_bytes(), b"Foo\\'bar");
+    }
+
+    #[test]
+    fn redirect_regex_rejects_unescaped_quote_in_title() {
+        let regex = Regex::new(REDIRECT_ROW_PATTERN).unwrap();
+        let row = br"(42,0,'Foo'bar',NULL,NULL)";
+        assert!(!regex.is_match(row));
+    }
+
+    #[test]
+    fn linktarget_regex_matches_bigint_id_and_escaped_title() {
+        let regex = Regex::new(LINKTARGET_ROW_PATTERN).unwrap();
+        let row = br"(18446744073709551615,-2,'Talk\:\\Main\'Page')";
+        let caps = regex.captures(row).unwrap();
+        assert_eq!(caps.get(1).unwrap().as_bytes(), b"18446744073709551615");
+        assert_eq!(caps.get(2).unwrap().as_bytes(), b"-2");
+        assert_eq!(caps.get(3).unwrap().as_bytes(), b"Talk\\:\\\\Main\\'Page");
+    }
+
+    #[test]
+    fn linktarget_regex_rejects_missing_quotes() {
+        let regex = Regex::new(LINKTARGET_ROW_PATTERN).unwrap();
+        let row = br"(10,0,NoQuotes)";
+        assert!(!regex.is_match(row));
+    }
+
+    #[test]
+    fn pagelinks_regex_uses_observed_dump_order() {
+        let regex = Regex::new(PAGELINKS_ROW_PATTERN).unwrap();
+        let row = br"(11,-7,22)";
+        let caps = regex.captures(row).unwrap();
+        assert_eq!(caps.get(1).unwrap().as_bytes(), b"11");
+        assert_eq!(caps.get(2).unwrap().as_bytes(), b"22");
+    }
+
+    #[test]
+    fn pagelinks_regex_accepts_positive_namespace() {
+        let regex = Regex::new(PAGELINKS_ROW_PATTERN).unwrap();
+        let row = br"(11,7,22)";
+        assert!(regex.is_match(row));
+    }
+
+    #[test]
+    fn pagelinks_regex_rejects_wrong_column_order_shape() {
+        let regex = Regex::new(PAGELINKS_ROW_PATTERN).unwrap();
+        let row = br"(11,22,-7)";
+        assert!(!regex.is_match(row));
+    }
+
+    #[test]
+    fn cleanup_redirects_flattens_chains() {
+        let mut redirs = HashMap::new();
+        redirs.insert(1, 2);
+        redirs.insert(2, 3);
+        redirs.insert(3, 4);
+
+        let cleaned = cleanup_redirects(redirs);
+        assert_eq!(cleaned.get(&1), Some(&4));
+        assert_eq!(cleaned.get(&2), Some(&4));
+        assert_eq!(cleaned.get(&3), Some(&4));
+    }
+
+    #[test]
+    fn cleanup_redirects_removes_self_redirects() {
+        let mut redirs = HashMap::new();
+        redirs.insert(1, 1);
+        redirs.insert(2, 3);
+
+        let cleaned = cleanup_redirects(redirs);
+        assert!(!cleaned.contains_key(&1));
+        assert_eq!(cleaned.get(&2), Some(&3));
+    }
+
+    #[test]
+    fn cleanup_redirects_handles_mixed_graph() {
+        let mut redirs = HashMap::new();
+        redirs.insert(1, 2);
+        redirs.insert(2, 2);
+        redirs.insert(3, 4);
+        redirs.insert(4, 5);
+
+        let cleaned = cleanup_redirects(redirs);
+        assert_eq!(cleaned.get(&1), Some(&2));
+        assert!(!cleaned.contains_key(&2));
+        assert_eq!(cleaned.get(&3), Some(&5));
+        assert_eq!(cleaned.get(&4), Some(&5));
+    }
 }
