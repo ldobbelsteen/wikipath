@@ -51,7 +51,7 @@ impl TableDumpFiles {
             self.page.as_path(),
             // Based on https://www.mediawiki.org/wiki/Manual:Page_table
             &Regex::new(
-                r"\((\d+),(-?\d+),'(.*?)',[01],[01],0\.\d+,'\d*',(?:'\d*'|NULL),\d+,\d+,(?:'.*?'|NULL),(?:'.*?'|NULL)\)",
+                r"\((\d+),(-?\d+),'((?:[^'\\]|\\.)*)',[01],[01],(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?,'\d*',(?:'\d*'|NULL),\d+,\d+,(?:'(?:[^'\\]|\\.)*'|NULL),(?:'(?:[^'\\]|\\.)*'|NULL)\)",
             )?,
             // Conservative upper bound for one `page` tuple in the SQL dump.
             // Assumes mysqldump-style escaping (varbinary fields can approach 2x expansion).
@@ -105,7 +105,9 @@ impl TableDumpFiles {
         sliding_regex_file(
             self.redirect.as_path(),
             // Based on https://www.mediawiki.org/wiki/Manual:Redirect_table
-            &Regex::new(r"\((\d+),(-?\d+),'(.*?)',(?:'.*?'|NULL),(?:'.*?'|NULL)\)")?,
+            &Regex::new(
+                r"\((\d+),(-?\d+),'((?:[^'\\]|\\.)*)',(?:'(?:[^'\\]|\\.)*'|NULL),(?:'(?:[^'\\]|\\.)*'|NULL)\)",
+            )?,
             // Conservative upper bound for one `redirect` tuple in the SQL dump.
             // Assumes mysqldump-style escaping (varbinary fields can approach 2x expansion).
             // Computed worst-case is ~1117 bytes:
@@ -171,7 +173,7 @@ impl TableDumpFiles {
         sliding_regex_file(
             self.linktarget.as_path(),
             // Based on https://www.mediawiki.org/wiki/Manual:Linktarget_table
-            &Regex::new(r"\((\d+),(-?\d+),'(.*?)'\)")?,
+            &Regex::new(r"\((\d+),(-?\d+),'((?:[^'\\]|\\.)*)'\)")?,
             // Conservative upper bound for one `linktarget` tuple in the SQL dump.
             // Assumes mysqldump-style escaping (`lt_title` can approach 2x expansion).
             // Computed worst-case is ~549 bytes:
@@ -245,6 +247,8 @@ impl TableDumpFiles {
         let mut remaining_batch = sliding_regex_file(
             self.pagelinks.as_path(),
             // Based on https://www.mediawiki.org/wiki/Manual:Pagelinks_table
+            // NOTE: despite newer schema docs listing `(pl_from, pl_target_id, pl_from_namespace)`,
+            // the dumps we parse are observed as `(pl_from, pl_from_namespace, pl_target_id)`.
             &Regex::new(r"\((\d+),(?:-?\d+),(\d+)\)")?,
             // Conservative upper bound for one `pagelinks` tuple in the SQL dump.
             // Computed worst-case is ~45 bytes:
