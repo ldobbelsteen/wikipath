@@ -1,5 +1,5 @@
 use crate::{
-    database::{LinkTargetId, PageId},
+    database::{LinkTargetId, PageId, PageNamespaceId},
     dump::TableDumpFiles,
 };
 use anyhow::{anyhow, Result};
@@ -46,31 +46,43 @@ impl IncomingLinkBatch {
 impl TableDumpFiles {
     /// Parse the page table dump file and return a mapping from page titles to page ids for each
     /// namespace.
-    pub fn parse_page_table(&self) -> Result<HashMap<String, PageId>> {
+    pub fn parse_page_table(&self) -> Result<HashMap<PageNamespaceId, HashMap<String, PageId>>> {
         sliding_regex_file(
             self.page.as_path(),
+            // Based on https://www.mediawiki.org/wiki/Manual:Page_table
             &Regex::new(
-                r"\(([0-9]{1,10}),0,'(.{0,255}?)',[01],[01],0.[0-9]{1,32}?,'[0-9]{14}',(?:'[0-9]{14}'|NULL),[0-9]{1,10},[0-9]{1,10},(?:'.{0,32}'|NULL),(?:'.{0,35}'|NULL)\)",
-            )?, // https://www.mediawiki.org/wiki/Manual:Page_table
-            1 + 10 + 4 + 255 + 8 + 32 + 2 + 14 + 3 + 14 + 2 + 10 + 1 + 10 + 2 + 32 + 3 + 35 + 2,
-            |caps| -> Result<(PageId, String)> {
+                r"\((\d+),(-?\d+),'(.*?)',[01],[01],0\.\d+,'\d*',(?:'\d*'|NULL),\d+,\d+,(?:'.*?'|NULL),(?:'.*?'|NULL)\)",
+            )?,
+            // Worst-case UTF-8 SQL dump row size ≈ numbers (~79B) + strings (~350B) + syntax (~25B)
+            454,
+            |caps| -> Result<(PageId, PageNamespaceId, String)> {
                 let id = {
                     let m = caps.get(1).unwrap(); // Capture 1 always participates in the match
                     let str = std::str::from_utf8(m.as_bytes())?;
                     str.parse::<PageId>()?
                 };
 
-                let title = {
+                let namespace = {
                     let m = caps.get(2).unwrap(); // Capture 2 always participates in the match
+                    let str = std::str::from_utf8(m.as_bytes())?;
+                    str.parse::<PageNamespaceId>()?
+                };
+
+                let title = {
+                    let m = caps.get(3).unwrap(); // Capture 3 always participates in the match
                     String::from_utf8(m.as_bytes().to_vec())?
                 };
 
-                Ok((id, title))
+                Ok((id, namespace, title))
             },
-            |result: &mut HashMap<String, PageId>, (id, title)| {
-                if let Some(prev) = result.insert(title, id) {
+            |result: &mut HashMap<PageNamespaceId, HashMap<String, PageId>>,
+             (id, namespace, title)| {
+                let namespace_map = result.entry(namespace).or_insert_with(HashMap::new);
+                if let Some(prev) = namespace_map.insert(title.clone(), id) {
                     if prev != id {
-                        return Err(anyhow!("two page ids for same title found: {prev} & {id}"));
+                        return Err(anyhow!(
+                            "two page ids for same title found in namespace {namespace}: {prev} & {id}"
+                        ));
                     }
                 }
                 Ok(())
@@ -81,14 +93,14 @@ impl TableDumpFiles {
     /// Parse the redirect table dump file and return a mapping from source page ids to target page ids.
     pub fn parse_redirect_table(
         &self,
-        title_to_id: &HashMap<String, PageId>,
+        title_to_id: &HashMap<PageNamespaceId, HashMap<String, PageId>>,
     ) -> Result<HashMap<PageId, PageId>> {
         sliding_regex_file(
             self.redirect.as_path(),
-            &Regex::new(
-                r"\(([0-9]{1,10}),0,'(.{0,255}?)',(?:'.{0,32}'|NULL),(?:'.{0,255}'|NULL)\)",
-            )?, // https://www.mediawiki.org/wiki/Manual:Redirect_table
-            1 + 10 + 4 + 255 + 3 + 32 + 3 + 255 + 2,
+            // Based on https://www.mediawiki.org/wiki/Manual:Redirect_table
+            &Regex::new(r"\((\d+),(-?\d+),'(.*?)',(?:'.*?'|NULL),(?:'.*?'|NULL)\)")?,
+            // Worst-case UTF-8 SQL dump row size ≈ numbers (~21B) + strings (~542B) + syntax (~25B)
+            588,
             |caps| -> Result<(PageId, PageId)> {
                 let source = {
                     let m = caps.get(1).unwrap(); // Capture 1 always participates in the match
@@ -96,13 +108,25 @@ impl TableDumpFiles {
                     str.parse::<PageId>()?
                 };
 
-                let target = {
+                let target_namespace = {
                     let m = caps.get(2).unwrap(); // Capture 2 always participates in the match
                     let str = std::str::from_utf8(m.as_bytes())?;
-                    if let Some(id) = title_to_id.get(str) {
-                        *id
+                    str.parse::<PageNamespaceId>()?
+                };
+
+                let target = {
+                    let m = caps.get(3).unwrap(); // Capture 3 always participates in the match
+                    let str = std::str::from_utf8(m.as_bytes())?;
+                    if let Some(namespace_map) = title_to_id.get(&target_namespace) {
+                        if let Some(id) = namespace_map.get(str) {
+                            *id
+                        } else {
+                            return Err(anyhow!("redirect target title '{str}' not known in namespace {target_namespace}"));
+                        }
                     } else {
-                        return Err(anyhow!("redirect target title '{str}' not known"));
+                        return Err(anyhow!(
+                            "redirect target namespace id {target_namespace} not known"
+                        ));
                     }
                 };
 
@@ -128,12 +152,14 @@ impl TableDumpFiles {
     /// Parse the linktarget table dump file and return a mapping from link target ids to page ids.
     pub fn parse_linktarget_table(
         &self,
-        title_to_id: &HashMap<String, PageId>,
+        title_to_id: &HashMap<PageNamespaceId, HashMap<String, PageId>>,
     ) -> Result<HashMap<LinkTargetId, PageId>> {
         sliding_regex_file(
             self.linktarget.as_path(),
-            &Regex::new(r"\(([0-9]{1,20}),0,'(.{0,255}?)'\)")?, // https://www.mediawiki.org/wiki/Manual:Linktarget_table
-            1 + 20 + 4 + 255 + 2,
+            // Based on https://www.mediawiki.org/wiki/Manual:Linktarget_table
+            &Regex::new(r"\((\d+),(-?\d+),'(.*?)'\)")?,
+            // Worst-case UTF-8 SQL dump row size ≈ numbers (~31B) + strings (~255B) + syntax (~22B)
+            308,
             |caps| -> Result<(LinkTargetId, PageId)> {
                 let linktarget = {
                     let m = caps.get(1).unwrap(); // Capture 1 always participates in the match
@@ -141,13 +167,25 @@ impl TableDumpFiles {
                     str.parse::<LinkTargetId>()?
                 };
 
-                let target = {
+                let target_namespace = {
                     let m = caps.get(2).unwrap(); // Capture 2 always participates in the match
                     let str = std::str::from_utf8(m.as_bytes())?;
-                    if let Some(id) = title_to_id.get(str) {
-                        *id
+                    str.parse::<PageNamespaceId>()?
+                };
+
+                let target = {
+                    let m = caps.get(3).unwrap(); // Capture 3 always participates in the match
+                    let str = std::str::from_utf8(m.as_bytes())?;
+                    if let Some(namespace_map) = title_to_id.get(&target_namespace) {
+                        if let Some(id) = namespace_map.get(str) {
+                            *id
+                        } else {
+                            return Err(anyhow!("linktarget title '{str}' not known in namespace {target_namespace}"));
+                        }
                     } else {
-                        return Err(anyhow!("linktarget title '{str}' not known"));
+                        return Err(anyhow!(
+                            "linktarget namespace id {target_namespace} not known"
+                        ));
                     }
                 };
 
@@ -185,8 +223,10 @@ impl TableDumpFiles {
     ) -> Result<()> {
         let mut remaining_batch = sliding_regex_file(
             self.pagelinks.as_path(),
-            &Regex::new(r"\(([0-9]{1,10}),0,([0-9]{1,20})\)")?, // https://www.mediawiki.org/wiki/Manual:Pagelinks_table
-            1 + 10 + 3 + 20 + 1,
+            // Based on https://www.mediawiki.org/wiki/Manual:Pagelinks_table
+            &Regex::new(r"\((\d+),(?:-?\d+),(\d+)\)")?,
+            // Worst-case UTF-8 SQL dump row size ≈ numbers (~41B) + strings (~0B) + syntax (~22B)
+            63,
             |caps| -> Result<(PageId, PageId)> {
                 let source = {
                     let m = caps.get(1).unwrap(); // Capture 1 always participates in the match

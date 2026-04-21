@@ -39,12 +39,16 @@ impl Database {
         {
             log::info!("parsing page table dump");
             let title_to_id = dump_files.parse_page_table()?;
-            if title_to_id.is_empty() {
+            let title_to_id_len = title_to_id
+                .iter()
+                .map(|(_, namespace_map)| namespace_map.len())
+                .sum::<usize>();
+            if title_to_id_len == 0 {
                 return Err(anyhow!(
                     "nothing parsed from page table, possibly caused by schema changes"
                 ));
             }
-            log::info!("{} page titles found!", title_to_id.len());
+            log::info!("{} page titles found!", title_to_id_len);
 
             log::info!("parsing redirect table dump");
             let redirects = dump_files.parse_redirect_table(&title_to_id)?;

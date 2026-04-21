@@ -7,15 +7,12 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
-/// Representation of a page id. The database schema uses 10-digit unsigned integers. A u32 cannot
-/// represent all values a 10-digit integer can, but since not that many Wikipedia articles exist
-/// for any language, this should be sufficient and saves memory and disk space.
-/// See: https://www.mediawiki.org/wiki/Manual:Pagelinks_table
+/// See https://www.mediawiki.org/wiki/Manual:Pagelinks_table
 pub type PageId = u32;
 
-/// Representation of a linktarget table id. The database schema uses 20-digit unsigned integers.
-/// A u64 cannot represent all values a 20-digit integer can, but since not that many Wikipedia
-/// articles exist for any language, this should be sufficient and saves memory and disk space.
+/// See https://www.mediawiki.org/wiki/Manual:Pagelinks_table
+pub type PageNamespaceId = i32;
+
 /// See https://www.mediawiki.org/wiki/Manual:Linktarget_table
 pub type LinkTargetId = u64;
 
