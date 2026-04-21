@@ -12,16 +12,27 @@ import "react-toastify/dist/ReactToastify.css";
 const App = () => {
   const [database, setDatabase] = useState<Database>();
   const [paths, setPaths] = useState<Paths | "loading">();
+  const [showAllPaths, setShowAllPaths] = useState(false);
 
-  const getPaths = (database: Database, source: Page, target: Page) => {
+  const requestPaths = (
+    selectedDatabase: Database,
+    source: Page,
+    target: Page,
+    maxPaths: number,
+  ) => {
     setPaths("loading");
-    fetchShortestPaths(database, source.id, target.id)
+    fetchShortestPaths(selectedDatabase, source.id, target.id, maxPaths)
       .then(setPaths)
       .catch((err: unknown) => {
         setPaths(undefined);
         toast.error("An unexpected error occurred while getting your paths");
         console.error(err);
       });
+  };
+
+  const getPaths = (selectedDatabase: Database, source: Page, target: Page) => {
+    setShowAllPaths(false);
+    requestPaths(selectedDatabase, source, target, 8);
   };
 
   return (
@@ -65,6 +76,22 @@ const App = () => {
                   : ""
               }`}
       </span>
+      {paths !== "loading" &&
+        paths !== undefined &&
+        paths.count > paths.paths.length && (
+          <button
+            type="button"
+            className="mb-2 text-sm text-white underline hover:opacity-80"
+            onClick={() => {
+              if (database) {
+                setShowAllPaths(true);
+                requestPaths(database, paths.source, paths.target, Infinity);
+              }
+            }}
+          >
+            Show all paths
+          </button>
+        )}
       <PathsGraph className="grow" paths={paths} />
       <ToastContainer />
     </>

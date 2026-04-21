@@ -46,10 +46,11 @@ export const fetchShortestPaths = async (
   database: Database,
   sourceId: number,
   targetId: number,
+  maxPaths = 8,
 ): Promise<Paths> => {
   const url = `/api/shortest_paths?language-code=${database.languageCode}&date-code=${database.dateCode}&source=${sourceId.toString()}&target=${targetId.toString()}`;
   const result = await get(url, PathsSchema);
-  const pathsOfIds = extractFullPaths(result.source, result.links, 8);
+  const pathsOfIds = extractFullPaths(result.source, result.links, maxPaths);
   const titles = await fetchTitles(
     result.languageCode,
     flattenUnique(pathsOfIds),
