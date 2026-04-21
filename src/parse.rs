@@ -66,6 +66,19 @@ const LINKTARGET_ROW_PATTERN: &str = r"\((\d+),(-?\d+),'((?:[^'\\]|\\.)*)'\)";
 // the dumps we parse are observed as `(pl_from, pl_from_namespace, pl_target_id)`.
 const PAGELINKS_ROW_PATTERN: &str = r"\((\d+),(?:-?\d+),(\d+)\)";
 
+enum ParseSkipReason {
+    MissingTargetTitle,
+    MissingTargetNamespace,
+    MissingLinkTargetId,
+    SelfRedirect,
+    SelfLink,
+}
+
+enum ExtractMatch<T> {
+    Store(T),
+    Skip(ParseSkipReason),
+}
+
 /// Struct representing a batch of links stored in the incoming format.
 #[derive(Debug, Default)]
 pub struct IncomingLinkBatch {
@@ -102,7 +115,7 @@ impl TableDumpFiles {
             self.page.as_path(),
             &Regex::new(PAGE_ROW_PATTERN)?,
             PAGE_MAX_MATCH_SIZE_BYTES,
-            |caps| -> Result<(PageId, PageNamespaceId, String)> {
+            |caps| -> Result<ExtractMatch<(PageId, PageNamespaceId, String)>> {
                 let id = {
                     let m = caps.get(1).unwrap(); // Capture 1 always participates in the match
                     let str = std::str::from_utf8(m.as_bytes())?;
@@ -120,7 +133,7 @@ impl TableDumpFiles {
                     std::str::from_utf8(m.as_bytes())?.to_owned()
                 };
 
-                Ok((id, namespace, title))
+                Ok(ExtractMatch::Store((id, namespace, title)))
             },
             |result: &mut HashMap<PageNamespaceId, HashMap<String, PageId>>,
              (id, namespace, title)| {
@@ -146,7 +159,7 @@ impl TableDumpFiles {
             self.redirect.as_path(),
             &Regex::new(REDIRECT_ROW_PATTERN)?,
             REDIRECT_MAX_MATCH_SIZE_BYTES,
-            |caps| -> Result<(PageId, PageId)> {
+            |caps| -> Result<ExtractMatch<(PageId, PageId)>> {
                 let source = {
                     let m = caps.get(1).unwrap(); // Capture 1 always participates in the match
                     let str = std::str::from_utf8(m.as_bytes())?;
@@ -166,20 +179,18 @@ impl TableDumpFiles {
                         if let Some(id) = namespace_map.get(str) {
                             *id
                         } else {
-                            return Err(anyhow!("redirect target title '{str}' not known in namespace {target_namespace}"));
+                            return Ok(ExtractMatch::Skip(ParseSkipReason::MissingTargetTitle));
                         }
                     } else {
-                        return Err(anyhow!(
-                            "redirect target namespace id {target_namespace} not known"
-                        ));
+                        return Ok(ExtractMatch::Skip(ParseSkipReason::MissingTargetNamespace));
                     }
                 };
 
                 if source == target {
-                    return Err(anyhow!("self-redirect found for page id {source}"));
+                    return Ok(ExtractMatch::Skip(ParseSkipReason::SelfRedirect));
                 }
 
-                Ok((source, target))
+                Ok(ExtractMatch::Store((source, target)))
             },
             |result: &mut HashMap<PageId, PageId>, (source, target)| {
                 if let Some(prev) = result.insert(source, target) {
@@ -203,7 +214,7 @@ impl TableDumpFiles {
             self.linktarget.as_path(),
             &Regex::new(LINKTARGET_ROW_PATTERN)?,
             LINKTARGET_MAX_MATCH_SIZE_BYTES,
-            |caps| -> Result<(LinkTargetId, PageId)> {
+            |caps| -> Result<ExtractMatch<(LinkTargetId, PageId)>> {
                 let linktarget = {
                     let m = caps.get(1).unwrap(); // Capture 1 always participates in the match
                     let str = std::str::from_utf8(m.as_bytes())?;
@@ -223,16 +234,14 @@ impl TableDumpFiles {
                         if let Some(id) = namespace_map.get(str) {
                             *id
                         } else {
-                            return Err(anyhow!("linktarget title '{str}' not known in namespace {target_namespace}"));
+                            return Ok(ExtractMatch::Skip(ParseSkipReason::MissingTargetTitle));
                         }
                     } else {
-                        return Err(anyhow!(
-                            "linktarget namespace id {target_namespace} not known"
-                        ));
+                        return Ok(ExtractMatch::Skip(ParseSkipReason::MissingTargetNamespace));
                     }
                 };
 
-                Ok((linktarget, target))
+                Ok(ExtractMatch::Store((linktarget, target)))
             },
             |result: &mut HashMap<LinkTargetId, PageId>, (linktarget, target)| {
                 if let Some(prev) = result.insert(linktarget, target) {
@@ -268,7 +277,7 @@ impl TableDumpFiles {
             self.pagelinks.as_path(),
             &Regex::new(PAGELINKS_ROW_PATTERN)?,
             PAGELINKS_MAX_MATCH_SIZE_BYTES,
-            |caps| -> Result<(PageId, PageId)> {
+            |caps| -> Result<ExtractMatch<(PageId, PageId)>> {
                 let source = {
                     let m = caps.get(1).unwrap(); // Capture 1 always participates in the match
                     let str = std::str::from_utf8(m.as_bytes())?;
@@ -284,17 +293,17 @@ impl TableDumpFiles {
                 let target = if let Some(target) = linktarget_to_target.get(&linktarget) {
                     *target
                 } else {
-                    return Err(anyhow!("linktarget id {linktarget} not known"));
+                    return Ok(ExtractMatch::Skip(ParseSkipReason::MissingLinkTargetId));
                 };
 
                 let source = *redirects.get(&source).unwrap_or(&source);
                 let target = *redirects.get(&target).unwrap_or(&target);
 
                 if source == target {
-                    return Err(anyhow!("self-link found for page id {source}"));
+                    return Ok(ExtractMatch::Skip(ParseSkipReason::SelfLink));
                 }
 
-                Ok((source, target))
+                Ok(ExtractMatch::Store((source, target)))
             },
             |batch: &mut IncomingLinkBatch, (source, target)| {
                 batch.insert(source, target);
@@ -322,7 +331,7 @@ impl TableDumpFiles {
 /// specified in bytes (max match size), to ensure that the regex can match across chunk boundaries
 /// when reading the file.
 fn sliding_regex_file<
-    F: Fn(&regex::bytes::Captures) -> Result<T>,
+    F: Fn(&regex::bytes::Captures) -> Result<ExtractMatch<T>>,
     G: Fn(&mut U, T) -> Result<()>,
     T,
     U: Default,
@@ -343,7 +352,12 @@ fn sliding_regex_file<
         regex_matches_total: usize,
         overlap_deduped: usize,
         extract_attempted: usize,
-        extract_failed: usize,
+        extract_malformed: usize,
+        skipped_missing_target_title: usize,
+        skipped_missing_target_namespace: usize,
+        skipped_missing_linktarget_id: usize,
+        skipped_self_redirect: usize,
+        skipped_self_link: usize,
         stored: usize,
     }
 
@@ -390,14 +404,30 @@ fn sliding_regex_file<
 
             stats.extract_attempted += 1;
             match extract_match(&captures) {
-                Ok(m) => {
+                Ok(ExtractMatch::Store(m)) => {
                     store_match(&mut result, m)?;
                     stats.stored += 1;
                 }
+                Ok(ExtractMatch::Skip(reason)) => match reason {
+                    ParseSkipReason::MissingTargetTitle => {
+                        stats.skipped_missing_target_title += 1;
+                    }
+                    ParseSkipReason::MissingTargetNamespace => {
+                        stats.skipped_missing_target_namespace += 1;
+                    }
+                    ParseSkipReason::MissingLinkTargetId => {
+                        stats.skipped_missing_linktarget_id += 1;
+                    }
+                    ParseSkipReason::SelfRedirect => {
+                        stats.skipped_self_redirect += 1;
+                    }
+                    ParseSkipReason::SelfLink => {
+                        stats.skipped_self_link += 1;
+                    }
+                }
                 Err(e) => {
-                    stats.extract_failed += 1;
-                    // NOTE: these happen often and can be ignored
-                    log::trace!("regex match extraction failed: {e}");
+                    stats.extract_malformed += 1;
+                    log::trace!("regex match extraction malformed: {e}");
                 }
             }
         }
@@ -406,21 +436,40 @@ fn sliding_regex_file<
         std::mem::swap(&mut prev_chunk.data, &mut cur_chunk.data);
     }
 
-    let failure_ratio = if stats.extract_attempted == 0 {
+    let skipped_total = stats.skipped_missing_target_title
+        + stats.skipped_missing_target_namespace
+        + stats.skipped_missing_linktarget_id
+        + stats.skipped_self_redirect
+        + stats.skipped_self_link;
+
+    let malformed_ratio = if stats.extract_attempted == 0 {
         0.0
     } else {
-        stats.extract_failed as f64 / stats.extract_attempted as f64
+        stats.extract_malformed as f64 / stats.extract_attempted as f64
+    };
+
+    let skipped_ratio = if stats.extract_attempted == 0 {
+        0.0
+    } else {
+        skipped_total as f64 / stats.extract_attempted as f64
     };
 
     log::info!(
-        "parse stats [{}]: matches={}, deduped_overlap={}, attempted={}, failed={}, stored={}, failure_ratio={:.4}",
+        "parse stats [{}]: matches={}, deduped_overlap={}, attempted={}, malformed={}, skipped_total={}, skipped_missing_target_title={}, skipped_missing_target_namespace={}, skipped_missing_linktarget_id={}, skipped_self_redirect={}, skipped_self_link={}, stored={}, malformed_ratio={:.4}, skipped_ratio={:.4}",
         path.display(),
         stats.regex_matches_total,
         stats.overlap_deduped,
         stats.extract_attempted,
-        stats.extract_failed,
+        stats.extract_malformed,
+        skipped_total,
+        stats.skipped_missing_target_title,
+        stats.skipped_missing_target_namespace,
+        stats.skipped_missing_linktarget_id,
+        stats.skipped_self_redirect,
+        stats.skipped_self_link,
         stats.stored,
-        failure_ratio,
+        malformed_ratio,
+        skipped_ratio,
     );
 
     Ok(result)
