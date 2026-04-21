@@ -117,7 +117,7 @@ impl TableDumpFiles {
 
                 let title = {
                     let m = caps.get(3).unwrap(); // Capture 3 always participates in the match
-                    String::from_utf8(m.as_bytes().to_vec())?
+                    std::str::from_utf8(m.as_bytes())?.to_owned()
                 };
 
                 Ok((id, namespace, title))
@@ -125,7 +125,7 @@ impl TableDumpFiles {
             |result: &mut HashMap<PageNamespaceId, HashMap<String, PageId>>,
              (id, namespace, title)| {
                 let namespace_map = result.entry(namespace).or_insert_with(HashMap::new);
-                if let Some(prev) = namespace_map.insert(title.clone(), id) {
+                if let Some(prev) = namespace_map.insert(title, id) {
                     if prev != id {
                         return Err(anyhow!(
                             "two page ids for same title found in namespace {namespace}: {prev} & {id}"
@@ -338,6 +338,15 @@ fn sliding_regex_file<
         end: usize,
     }
 
+    #[derive(Default)]
+    struct ParseStats {
+        regex_matches_total: usize,
+        overlap_deduped: usize,
+        extract_attempted: usize,
+        extract_failed: usize,
+        stored: usize,
+    }
+
     impl Default for Chunk {
         fn default() -> Self {
             Self {
@@ -350,6 +359,7 @@ fn sliding_regex_file<
     let file = File::open(path)?;
     let mut reader = GzDecoder::new(file);
     let mut result = U::default();
+    let mut stats = ParseStats::default();
 
     let mut prev_chunk = Chunk::default();
     let mut cur_chunk = Chunk::default();
@@ -370,11 +380,22 @@ fn sliding_regex_file<
 
         // Process the current chunk by running the regex on it.
         for captures in regex.captures_iter(&cur_chunk.data[..cur_chunk.end]) {
+            stats.regex_matches_total += 1;
+
+            let full_match = captures.get(0).unwrap(); // Full match always participates
+            if full_match.end() <= overlap {
+                stats.overlap_deduped += 1;
+                continue;
+            }
+
+            stats.extract_attempted += 1;
             match extract_match(&captures) {
                 Ok(m) => {
                     store_match(&mut result, m)?;
+                    stats.stored += 1;
                 }
                 Err(e) => {
+                    stats.extract_failed += 1;
                     // NOTE: these happen often and can be ignored
                     log::trace!("regex match extraction failed: {e}");
                 }
@@ -384,6 +405,23 @@ fn sliding_regex_file<
         // Make the current chunk the previous chunk.
         std::mem::swap(&mut prev_chunk.data, &mut cur_chunk.data);
     }
+
+    let failure_ratio = if stats.extract_attempted == 0 {
+        0.0
+    } else {
+        stats.extract_failed as f64 / stats.extract_attempted as f64
+    };
+
+    log::info!(
+        "parse stats [{}]: matches={}, deduped_overlap={}, attempted={}, failed={}, stored={}, failure_ratio={:.4}",
+        path.display(),
+        stats.regex_matches_total,
+        stats.overlap_deduped,
+        stats.extract_attempted,
+        stats.extract_failed,
+        stats.stored,
+        failure_ratio,
+    );
 
     Ok(result)
 }
