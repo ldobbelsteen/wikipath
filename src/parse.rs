@@ -5,12 +5,7 @@ use crate::{
 use anyhow::{anyhow, Result};
 use flate2::read::GzDecoder;
 use regex::bytes::Regex;
-use std::{
-    collections::{HashMap, HashSet},
-    fs::File,
-    io::Read,
-    path::Path,
-};
+use std::{collections::HashMap, fs::File, io::Read, path::Path};
 
 const CHUNK_SIZE_BYTES: usize = 1024 * 1024; // 1MB
 const MAX_LINK_BATCH_SIZE: usize = 4_000_000;
@@ -541,35 +536,75 @@ fn sliding_regex_file<
     Ok(result)
 }
 
-/// Remove chains of redirects from a redirect mapping by concatenating redirects to redirects into
-/// single redirects. This will flatten any redirect paths larger than one.
-pub fn cleanup_redirects(mut redirs: HashMap<PageId, PageId>) -> HashMap<PageId, PageId> {
-    let mut updates = HashMap::new();
-    let mut removals = HashSet::new();
+/// Compress redirect chains to their final targets, removing self-redirects and any redirects that
+/// participate in (or lead into) redirect cycles.
+pub fn compress_redirect_chains(redirs: &mut HashMap<PageId, PageId>) {
+    let sources: Vec<PageId> = redirs.keys().copied().collect();
+    let mut resolved: HashMap<PageId, Option<PageId>> = HashMap::new();
 
-    loop {
-        for (source, target) in &redirs {
-            if *source == *target {
-                removals.insert(*source);
-            } else if let Some(new_target) = redirs.get(target) {
-                updates.insert(*source, *new_target);
+    for source in &sources {
+        if resolved.contains_key(source) {
+            continue;
+        }
+
+        let mut path: Vec<PageId> = Vec::new();
+        let mut seen = HashMap::new(); // page id -> index in path
+        let mut cur = *source;
+
+        loop {
+            if let Some(outcome) = resolved.get(&cur).copied() {
+                for node in path {
+                    resolved.insert(node, outcome);
+                }
+                break;
             }
-        }
 
-        if updates.is_empty() && removals.is_empty() {
-            break;
-        }
+            if let Some(cycle_start) = seen.get(&cur).copied() {
+                for &node in &path[cycle_start..] {
+                    resolved.insert(node, None);
+                }
+                for &node in &path[..cycle_start] {
+                    resolved.insert(node, None);
+                }
+                break;
+            }
 
-        for (source, target) in updates.drain() {
-            redirs.insert(source, target);
-        }
+            seen.insert(cur, path.len());
+            path.push(cur);
 
-        for source in removals.drain() {
-            redirs.remove(&source);
+            let next = if let Some(next) = redirs.get(&cur) {
+                *next
+            } else {
+                for node in path {
+                    resolved.insert(node, Some(cur));
+                }
+                break;
+            };
+
+            if next == cur {
+                for node in path {
+                    resolved.insert(node, None);
+                }
+                break;
+            }
+
+            cur = next;
         }
     }
 
-    redirs
+    redirs.retain(|source, _| {
+        if let Some(Some(target)) = resolved.get(source) {
+            *target != *source
+        } else {
+            false
+        }
+    });
+
+    for (source, target) in redirs.iter_mut() {
+        if let Some(Some(final_target)) = resolved.get(source) {
+            *target = *final_target;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -711,10 +746,10 @@ mod tests {
         redirs.insert(2, 3);
         redirs.insert(3, 4);
 
-        let cleaned = cleanup_redirects(redirs);
-        assert_eq!(cleaned.get(&1), Some(&4));
-        assert_eq!(cleaned.get(&2), Some(&4));
-        assert_eq!(cleaned.get(&3), Some(&4));
+        compress_redirect_chains(&mut redirs);
+        assert_eq!(redirs.get(&1), Some(&4));
+        assert_eq!(redirs.get(&2), Some(&4));
+        assert_eq!(redirs.get(&3), Some(&4));
     }
 
     #[test]
@@ -723,9 +758,9 @@ mod tests {
         redirs.insert(1, 1);
         redirs.insert(2, 3);
 
-        let cleaned = cleanup_redirects(redirs);
-        assert!(!cleaned.contains_key(&1));
-        assert_eq!(cleaned.get(&2), Some(&3));
+        compress_redirect_chains(&mut redirs);
+        assert!(!redirs.contains_key(&1));
+        assert_eq!(redirs.get(&2), Some(&3));
     }
 
     #[test]
@@ -736,10 +771,81 @@ mod tests {
         redirs.insert(3, 4);
         redirs.insert(4, 5);
 
-        let cleaned = cleanup_redirects(redirs);
-        assert_eq!(cleaned.get(&1), Some(&2));
-        assert!(!cleaned.contains_key(&2));
-        assert_eq!(cleaned.get(&3), Some(&5));
-        assert_eq!(cleaned.get(&4), Some(&5));
+        compress_redirect_chains(&mut redirs);
+        assert!(!redirs.contains_key(&1));
+        assert!(!redirs.contains_key(&2));
+        assert_eq!(redirs.get(&3), Some(&5));
+        assert_eq!(redirs.get(&4), Some(&5));
+    }
+
+    #[test]
+    fn cleanup_redirects_removes_three_cycle() {
+        let mut redirs = HashMap::new();
+        redirs.insert(1, 2);
+        redirs.insert(2, 3);
+        redirs.insert(3, 1);
+
+        compress_redirect_chains(&mut redirs);
+        assert!(redirs.is_empty());
+    }
+
+    #[test]
+    fn cleanup_redirects_removes_five_cycle_with_tail() {
+        let mut redirs = HashMap::new();
+        redirs.insert(1, 2);
+        redirs.insert(2, 3);
+        redirs.insert(3, 4);
+        redirs.insert(4, 5);
+        redirs.insert(5, 1);
+        redirs.insert(10, 1);
+
+        compress_redirect_chains(&mut redirs);
+        assert!(redirs.is_empty());
+    }
+
+    #[test]
+    fn cleanup_redirects_keeps_direct_terminal_redirect() {
+        let mut redirs = HashMap::new();
+        redirs.insert(10, 99); // 99 is not itself a redirect source
+
+        compress_redirect_chains(&mut redirs);
+        assert_eq!(redirs.get(&10), Some(&99));
+    }
+
+    #[test]
+    fn cleanup_redirects_compresses_shared_tail() {
+        let mut redirs = HashMap::new();
+        redirs.insert(1, 3);
+        redirs.insert(2, 3);
+        redirs.insert(3, 4);
+        redirs.insert(4, 8);
+
+        compress_redirect_chains(&mut redirs);
+        assert_eq!(redirs.get(&1), Some(&8));
+        assert_eq!(redirs.get(&2), Some(&8));
+        assert_eq!(redirs.get(&3), Some(&8));
+        assert_eq!(redirs.get(&4), Some(&8));
+    }
+
+    #[test]
+    fn cleanup_redirects_handles_disjoint_components() {
+        let mut redirs = HashMap::new();
+        // Acyclic component.
+        redirs.insert(1, 2);
+        redirs.insert(2, 7);
+        // Cyclic component with an incoming tail.
+        redirs.insert(10, 11);
+        redirs.insert(11, 12);
+        redirs.insert(12, 10);
+        redirs.insert(20, 10);
+
+        compress_redirect_chains(&mut redirs);
+
+        assert_eq!(redirs.get(&1), Some(&7));
+        assert_eq!(redirs.get(&2), Some(&7));
+        assert!(!redirs.contains_key(&10));
+        assert!(!redirs.contains_key(&11));
+        assert!(!redirs.contains_key(&12));
+        assert!(!redirs.contains_key(&20));
     }
 }

@@ -1,7 +1,7 @@
 use crate::{
     database::{Database, Metadata, Mode},
     dump::TableDumpFiles,
-    parse::cleanup_redirects,
+    parse::compress_redirect_chains,
 };
 use anyhow::{anyhow, Result};
 use humantime::format_duration;
@@ -51,7 +51,7 @@ impl Database {
             log::info!("{} page titles found!", title_to_id_len);
 
             log::info!("parsing redirect table dump");
-            let redirects = dump_files.parse_redirect_table(&title_to_id)?;
+            let mut redirects = dump_files.parse_redirect_table(&title_to_id)?;
             if redirects.is_empty() {
                 return Err(anyhow!(
                     "nothing parsed from redirect table, possibly caused by schema changes"
@@ -59,9 +59,9 @@ impl Database {
             }
             log::info!("{} redirects found!", redirects.len());
 
-            log::info!("cleaning up redirects");
-            let redirects = cleanup_redirects(redirects);
-            log::info!("{} clean redirects found!", redirects.len());
+            log::info!("compressing redirect chains");
+            compress_redirect_chains(&mut redirects);
+            log::info!("{} redirects after compression", redirects.len());
 
             log::info!("inserting redirects into database");
             let mut txn = db.write_txn()?;
