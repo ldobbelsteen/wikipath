@@ -7,7 +7,95 @@ use std::{
     fs::{self, File},
     io::{BufReader, Read, Write},
     path::{Path, PathBuf},
+    time::Duration,
 };
+
+/// User-Agent string identifying this bot per the Wikimedia Foundation User-Agent Policy.
+/// https://foundation.wikimedia.org/wiki/Policy:Wikimedia_Foundation_User-Agent_Policy
+/// Format: <client name>/<version> (<contact information>)
+const USER_AGENT: &str = concat!(
+    "Wikipath/",
+    env!("CARGO_PKG_VERSION"),
+    " (https://github.com/ldobbelsteen/wikipath/)"
+);
+
+/// Build a `reqwest::Client` configured for compliance with the Wikimedia Robot policy
+/// (https://wikitech.wikimedia.org/wiki/Robot_policy):
+/// - Descriptive User-Agent header (User-Agent Policy, rule #2).
+/// - gzip transport compression (Robot policy "Generally applicable rules", rule #5 "Default to gzip").
+/// - Connect timeout so hung connections don't stall builds indefinitely.
+pub fn build_client() -> Result<reqwest::Client> {
+    Ok(reqwest::Client::builder()
+        .user_agent(USER_AGENT)
+        .gzip(true)
+        .connect_timeout(Duration::from_secs(30))
+        .build()?)
+}
+
+/// Send a request with retry handling that complies with the Wikimedia Robot policy
+/// (https://wikitech.wikimedia.org/wiki/Robot_policy):
+/// - On `429 Too Many Requests`, honor the `Retry-After` header before retrying
+///   (Robot policy "Generally applicable rules", rule #6 "Respect our HTTP status codes").
+/// - On `5xx`, use a short exponential backoff (30s, 60s, 120s) before giving up
+///   (Robot policy "Rules for other resources": pause on 5xx status codes).
+/// - Other `4xx` responses fail fast.
+///
+/// All requests passed here are bodyless GET/HEAD, so `RequestBuilder::try_clone()` is safe.
+async fn send_with_retry(builder: reqwest::RequestBuilder) -> Result<reqwest::Response> {
+    const MAX_ATTEMPTS: u32 = 4;
+    let mut backoff_secs: u64 = 30;
+    let mut attempt = 0;
+
+    loop {
+        attempt += 1;
+        let resp = builder
+            .try_clone()
+            .context("request was not cloneable for retry")?
+            .send()
+            .await?;
+
+        let status = resp.status();
+        if status.is_success() {
+            return Ok(resp);
+        }
+
+        if status.as_u16() == 429 {
+            let retry_after = resp
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|h| h.to_str().ok())
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(60);
+            log::warn!(
+                "received 429 from Wikimedia, sleeping {retry_after}s before retry (attempt {attempt}/{MAX_ATTEMPTS})"
+            );
+            if attempt >= MAX_ATTEMPTS {
+                bail!("received 429 from Wikimedia, exhausted {MAX_ATTEMPTS} retries");
+            }
+            tokio::time::sleep(Duration::from_secs(retry_after)).await;
+            continue;
+        }
+
+        if status.is_server_error() {
+            if attempt >= MAX_ATTEMPTS {
+                let body = resp.text().await.unwrap_or_default();
+                bail!(
+                    "received {status} from Wikimedia, exhausted {MAX_ATTEMPTS} retries; body: {body}"
+                );
+            }
+            log::warn!(
+                "received {status} from Wikimedia, backing off {backoff_secs}s (attempt {attempt}/{MAX_ATTEMPTS})"
+            );
+            tokio::time::sleep(Duration::from_secs(backoff_secs)).await;
+            backoff_secs *= 2;
+            continue;
+        }
+
+        // Other 4xx: fail fast.
+        let body = resp.text().await.unwrap_or_default();
+        bail!("received {status} from Wikimedia; body: {body}");
+    }
+}
 
 /// Struct to hold paths to local dump files.
 #[derive(Debug)]
@@ -83,6 +171,7 @@ impl TableDumpFileMetadatas {
 impl TableDumpFiles {
     /// Get metadatas of the dump files from Wikimedia. The date code may be "latest".
     pub async fn get_metadatas(
+        client: &reqwest::Client,
         language_code: &str,
         date_code: &str,
     ) -> Result<TableDumpFileMetadatas> {
@@ -90,7 +179,7 @@ impl TableDumpFiles {
             "https://dumps.wikimedia.org/{language_code}wiki/{date_code}/{language_code}wiki-{date_code}-sha1sums.txt"
         );
 
-        let resp = reqwest::get(url).await?;
+        let resp = send_with_retry(client.get(&url).timeout(Duration::from_secs(60))).await?;
         let lines = resp.text().await?;
 
         let lines_split = lines
@@ -143,12 +232,21 @@ impl TableDumpFiles {
     }
 
     /// Download all relevant dump files from Wikimedia into a directory.
-    pub async fn download(dumps_dir: &Path, metadatas: TableDumpFileMetadatas) -> Result<Self> {
+    pub async fn download(
+        client: &reqwest::Client,
+        dumps_dir: &Path,
+        metadatas: TableDumpFileMetadatas,
+    ) -> Result<Self> {
         log::info!("downloading dump files");
-        let page = Self::download_single(dumps_dir, &metadatas.page).await?;
-        let redirect = Self::download_single(dumps_dir, &metadatas.redirect).await?;
-        let pagelinks = Self::download_single(dumps_dir, &metadatas.pagelinks).await?;
-        let linktarget = Self::download_single(dumps_dir, &metadatas.linktarget).await?;
+        let page = Self::download_single(client, dumps_dir, &metadatas.page).await?;
+        // Robot policy "Rules for other resources": use a delay of at least 1 second between requests.
+        // https://wikitech.wikimedia.org/wiki/Robot_policy#Rules_for_other_resources
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let redirect = Self::download_single(client, dumps_dir, &metadatas.redirect).await?;
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let pagelinks = Self::download_single(client, dumps_dir, &metadatas.pagelinks).await?;
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let linktarget = Self::download_single(client, dumps_dir, &metadatas.linktarget).await?;
 
         log::info!("checking dump file hashes");
         check_file_hash(&page, &metadatas.page.hash)?;
@@ -166,6 +264,7 @@ impl TableDumpFiles {
 
     /// Download a single file from Wikimedia into a directory.
     async fn download_single(
+        client: &reqwest::Client,
         dumps_dir: &Path,
         metadata: &TableDumpFileMetadata,
     ) -> Result<PathBuf> {
@@ -179,7 +278,6 @@ impl TableDumpFiles {
             }
         }?;
 
-        let client = reqwest::Client::new();
         let url = format!(
             "https://dumps.wikimedia.org/{}wiki/{}/{}",
             metadata.language_code,
@@ -187,7 +285,7 @@ impl TableDumpFiles {
             metadata.to_full_name(),
         );
 
-        let head_resp = client.head(&url).send().await?;
+        let head_resp = send_with_retry(client.head(&url)).await?;
         let existing_bytes = file.metadata()?.len();
         let total_bytes = head_resp
             .headers()
@@ -196,19 +294,12 @@ impl TableDumpFiles {
             .context(format!("missing Content-Length header at '{url}'"))?;
 
         if existing_bytes < total_bytes {
-            let mut resp = client
-                .get(&url)
-                .header(reqwest::header::RANGE, format!("bytes={existing_bytes}-"))
-                .send()
-                .await?;
-
-            if !resp.status().is_success() {
-                return Err(anyhow!(
-                    "failed to download '{}' with status '{}'",
-                    url,
-                    resp.status()
-                ));
-            }
+            let mut resp = send_with_retry(
+                client
+                    .get(&url)
+                    .header(reqwest::header::RANGE, format!("bytes={existing_bytes}-")),
+            )
+            .await?;
 
             while let Some(chunk) = resp.chunk().await? {
                 file.write_all(&chunk)?;

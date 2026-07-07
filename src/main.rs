@@ -101,11 +101,14 @@ async fn main() -> Result<()> {
             let databases_dir = Path::new(&databases);
             let dumps_dir = Path::new(&dumps);
 
+            let client = dump::build_client()?;
+
             for language_code in languages.split(',') {
                 log::info!("building '{language_code}' database");
 
                 log::info!("getting dump information");
-                let metadatas = TableDumpFiles::get_metadatas(language_code, &date_code).await?;
+                let metadatas =
+                    TableDumpFiles::get_metadatas(&client, language_code, &date_code).await?;
                 let metadata = metadatas.to_normal();
 
                 let tmp_dir = databases_dir.join(".tmp");
@@ -127,7 +130,7 @@ async fn main() -> Result<()> {
                 }
 
                 let start = Instant::now();
-                let dump_files = TableDumpFiles::download(dumps_dir, metadatas).await?;
+                let dump_files = TableDumpFiles::download(&client, dumps_dir, metadatas).await?;
                 log::info!(
                     "dump files downloaded in {}!",
                     format_duration(start.elapsed())
