@@ -10,3 +10,4 @@ permissions:
 jobs:
   release:
     uses: ldobbelsteen/github-actions/.github/workflows/create-release.yml@main
+    secrets: inherit
