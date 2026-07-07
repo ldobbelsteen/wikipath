@@ -1,4 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="144" height="144">
+    <title>Swap</title>
     <line x1="32" y1="52" x2="120" y2="52" stroke="white" stroke-width="8" stroke-linecap="round" />
     <line x1="24" y1="52" x2="40" y2="36" stroke="white" stroke-width="8" stroke-linecap="round" />
     <line x1="24" y1="52" x2="40" y2="68" stroke="white" stroke-width="8" stroke-linecap="round" />

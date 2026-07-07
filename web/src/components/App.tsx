@@ -12,7 +12,6 @@ import "react-toastify/dist/ReactToastify.css";
 const App = () => {
   const [database, setDatabase] = useState<Database>();
   const [paths, setPaths] = useState<Paths | "loading">();
-  const [showAllPaths, setShowAllPaths] = useState(false);
 
   const requestPaths = (
     selectedDatabase: Database,
@@ -31,7 +30,6 @@ const App = () => {
   };
 
   const getPaths = (selectedDatabase: Database, source: Page, target: Page) => {
-    setShowAllPaths(false);
     requestPaths(selectedDatabase, source, target, 8);
   };
 
@@ -84,7 +82,6 @@ const App = () => {
             className="mb-2 text-sm text-white underline hover:opacity-80"
             onClick={() => {
               if (database) {
-                setShowAllPaths(true);
                 requestPaths(database, paths.source, paths.target, Infinity);
               }
             }}
