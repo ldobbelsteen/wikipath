@@ -12,8 +12,11 @@ import {
 } from "./schema";
 import { getTitle, storeTitle } from "./storage";
 
+// Browser JS can't set the User-Agent header, so the User-Agent Policy recommends the
+// `Api-User-Agent` header instead to identify the bot.
+// https://foundation.wikimedia.org/wiki/Policy:Wikimedia_Foundation_User-Agent_Policy#Code_examples
 const headers = {
-  "Api-User-Agent": "Wikipath/1.1 (https://github.com/ldobbelsteen/wikipath/)",
+  "Api-User-Agent": `Wikipath/${import.meta.env.VERSION} (https://github.com/ldobbelsteen/wikipath/)`,
 };
 
 const get = async <T, U>(
@@ -21,11 +24,27 @@ const get = async <T, U>(
   schema: z.Schema<T, U>,
   abort?: AbortSignal,
 ): Promise<T> => {
-  const res = await fetch(url, {
-    signal: abort,
-    headers: headers,
-    method: "GET",
-  });
+  const attempt = async (): Promise<Response> => {
+    const res = await fetch(url, {
+      signal: abort,
+      headers: headers,
+      method: "GET",
+    });
+    if (res.status === 429) {
+      // Robot policy "Generally applicable rules", rule #6 "Respect our HTTP status codes":
+      // honor the Retry-After delay on 429 responses.
+      // https://wikitech.wikimedia.org/wiki/Robot_policy#Generally_applicable_rules
+      const retryAfter = res.headers.get("Retry-After");
+      const delayMs = retryAfter
+        ? Number.parseInt(retryAfter, 10) * 1000
+        : 5000;
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      return fetch(url, { signal: abort, headers: headers, method: "GET" });
+    }
+    return res;
+  };
+
+  const res = await attempt();
   if (res.ok) {
     const parse = await schema.safeParseAsync(await res.json());
     if (!parse.success) {
