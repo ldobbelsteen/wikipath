@@ -1,0 +1,13 @@
+name: build-image
+
+on:
+  release:
+    types: [released]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    uses: ldobbelsteen/github-actions/.github/workflows/ghcr-build-push.yml@v1
